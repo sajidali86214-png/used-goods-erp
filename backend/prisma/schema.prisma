@@ -1,0 +1,547 @@
+// Data model implementing docs/02-data-model.md — STAGE 1 SLICE ONLY.
+// This file currently contains identity/access, master data, suppliers,
+// purchasing, stock/movements, media, and import-job tables.
+// Stage 2 (Customer, SalesOrder, Reservation, Shipment, Return, Refund,
+// Account, LedgerEntry, Expense, Transfer, PeriodLock, ...) and Stage 3
+// (ScreenshotExtractionJob, ...) are specified in docs/02-data-model.md
+// sections 6-8 and will be added as additive migrations, not yet created.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Identity & access (Stage 1) ----------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  mfaSecret    String?
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  roles           UserRole[]
+  auditEvents     AuditEvent[]        @relation("AuditActor")
+  approvalsGiven  Approval[]          @relation("ApprovalDecider")
+  approvalsAsked  Approval[]          @relation("ApprovalRequester")
+}
+
+model Role {
+  id         String   @id @default(uuid())
+  code       String   @unique // owner | manager | receiving | picker | seller | finance | viewer
+  label      String
+  isSystem   Boolean  @default(true)
+
+  users       UserRole[]
+  permissions RolePermission[]
+  thresholds  ApprovalThreshold[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User @relation(fields: [userId], references: [id])
+  role   Role @relation(fields: [roleId], references: [id])
+
+  @@id([userId, roleId])
+}
+
+model Permission {
+  id    String @id @default(uuid())
+  code  String @unique // e.g. cost.view, profit.view, refund.approve
+  label String
+
+  roles RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id])
+  permission   Permission @relation(fields: [permissionId], references: [id])
+
+  @@id([roleId, permissionId])
+}
+
+model ApprovalThreshold {
+  id             String  @id @default(uuid())
+  scope          String  // e.g. "refund_pkr", "discount_pct"
+  roleId         String
+  maxValue       Decimal @db.Decimal(18, 4)
+  requiresSecond Boolean @default(false)
+  role           Role    @relation(fields: [roleId], references: [id])
+}
+
+model AuditEvent {
+  id             String    @id @default(uuid())
+  actorUserId    String
+  action         String
+  entityType     String
+  entityId       String
+  beforeJson     Json?
+  afterJson      Json?
+  reason         String?
+  requestId      String?
+  approvedByUserId String?
+  createdAt      DateTime  @default(now())
+
+  actor User @relation("AuditActor", fields: [actorUserId], references: [id])
+
+  @@index([entityType, entityId])
+}
+
+model Approval {
+  id             String   @id @default(uuid())
+  entityType     String
+  entityId       String
+  requestedById  String
+  decidedById    String?
+  decision       String?  // approved | rejected | pending
+  reason         String?
+  isSelfApproval Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  decidedAt      DateTime?
+
+  requestedBy User  @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  decidedBy   User? @relation("ApprovalDecider", fields: [decidedById], references: [id])
+}
+
+// ---------- Master / reference data (Stage 1) ----------
+
+model Category {
+  id         String     @id @default(uuid())
+  name       String
+  parentId   String?
+  archivedAt DateTime?
+  parent     Category?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children   Category[] @relation("CategoryParent")
+  products   Product[]
+}
+
+model Product {
+  id              String    @id @default(uuid())
+  skuCode         String    @unique
+  name            String
+  categoryId      String
+  description     String?
+  unitOfMeasure   String    @default("piece")
+  brand           String?
+  sizeGroup       String?
+  material        String?
+  defaultSellPrice Decimal? @db.Decimal(18, 4)
+  minPrice        Decimal?  @db.Decimal(18, 4)
+  isActive        Boolean   @default(true)
+  archivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  category Category @relation(fields: [categoryId], references: [id])
+  photos   ProductPhoto[]
+  grnLines GRNLine[]
+  lots     Lot[]
+  movements StockMovement[]
+  stockStates StockState[]
+  individualItems IndividualItem[]
+  poLines  PurchaseOrderLine[]
+}
+
+model ProductPhoto {
+  id               String  @id @default(uuid())
+  productId        String
+  mediaAssetId     String
+  isRepresentative Boolean @default(true)
+  caption          String?
+
+  product Product    @relation(fields: [productId], references: [id])
+  media   MediaAsset @relation(fields: [mediaAssetId], references: [id])
+}
+
+model Grade {
+  id         String    @id @default(uuid())
+  code       String    @unique // A | B | C | UNGRADED | ...
+  label      String
+  definition String?
+  archivedAt DateTime?
+
+  costLayers     CostLayer[]
+  movements      StockMovement[]
+  stockStates    StockState[]
+  individualItems IndividualItem[]
+}
+
+model Bin {
+  id         String    @id @default(uuid())
+  code       String    @unique
+  label      String
+  archivedAt DateTime?
+
+  costLayers  CostLayer[]
+  movements   StockMovement[]
+  stockStates StockState[]
+}
+
+model Currency {
+  id            String  @id @default(uuid())
+  code          String  @unique // PKR | GBP | USD | ...
+  symbol        String
+  decimalPlaces Int     @default(2)
+  isActive      Boolean @default(true)
+}
+
+model SalesChannel {
+  id                 String    @id @default(uuid())
+  code               String    @unique // fleek | local_market | friend | online | instagram
+  label              String
+  defaultCommissionPct Decimal? @db.Decimal(6, 3)
+  archivedAt         DateTime?
+}
+
+model PaymentMethodAccount {
+  id         String    @id @default(uuid())
+  label      String
+  currencyId String
+  kind       String // cash | bank | mobile_wallet
+  archivedAt DateTime?
+}
+
+model ExpenseCategory {
+  id         String    @id @default(uuid())
+  label      String
+  archivedAt DateTime?
+}
+
+model ReasonCode {
+  id         String    @id @default(uuid())
+  kind       String // cancellation | return | adjustment
+  label      String
+  archivedAt DateTime?
+}
+
+// ---------- Suppliers & purchasing (Stage 1) ----------
+
+model Supplier {
+  id              String   @id @default(uuid())
+  name            String
+  contactPerson   String?
+  phone           String?
+  email           String?
+  address         String?
+  categories      String[]
+  defaultCurrencyId String
+  paymentTerms    String?
+  bankDetails     Json?    // access restricted at the API layer via supplier.payment_details.view
+  taxDetails      Json?
+  qualityAgreement String?
+  returnPolicy    String?
+  isActive        Boolean  @default(true)
+  approvalStatus  String   @default("pending")
+  createdAt       DateTime @default(now())
+
+  purchaseOrders  PurchaseOrder[]
+  advances        SupplierAdvance[]
+  invoices        SupplierInvoice[]
+  payments        SupplierPayment[]
+  grns            GRN[]
+  lots            Lot[]
+}
+
+model PurchaseOrder {
+  id                 String   @id @default(uuid())
+  poNumber           String   @unique
+  supplierId         String
+  status             String   @default("draft") // draft | approved | cancelled | closed
+  currencyId         String
+  expectedReceiptDate DateTime?
+  terms              String?
+  notes              String?
+  createdAt          DateTime @default(now())
+
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  lines    PurchaseOrderLine[]
+  advances SupplierAdvance[]
+  invoices SupplierInvoice[]
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid())
+  poId            String
+  productId       String
+  orderedQty      Decimal @db.Decimal(18, 4)
+  unitPrice       Decimal @db.Decimal(18, 4)
+  discount        Decimal? @db.Decimal(18, 4)
+  additionalCosts Decimal? @db.Decimal(18, 4)
+
+  po       PurchaseOrder @relation(fields: [poId], references: [id])
+  product  Product       @relation(fields: [productId], references: [id])
+  grnLines GRNLine[]
+}
+
+model SupplierAdvance {
+  id                   String   @id @default(uuid())
+  supplierId           String
+  poId                 String?
+  currencyId           String
+  amount               Decimal  @db.Decimal(18, 4)
+  paidAt               DateTime
+  paymentMethodAccountId String
+  status               String   @default("open") // open | partially_applied | applied
+  reference            String?
+
+  supplier Supplier       @relation(fields: [supplierId], references: [id])
+  po       PurchaseOrder? @relation(fields: [poId], references: [id])
+}
+
+model SupplierInvoice {
+  id             String   @id @default(uuid())
+  supplierId     String
+  poId           String?
+  currencyId     String
+  amount         Decimal  @db.Decimal(18, 4)
+  invoiceDate    DateTime
+  matchedAdvance Decimal  @default(0) @db.Decimal(18, 4)
+  status         String   @default("open")
+
+  supplier Supplier       @relation(fields: [supplierId], references: [id])
+  po       PurchaseOrder? @relation(fields: [poId], references: [id])
+  payments SupplierPayment[]
+}
+
+model SupplierPayment {
+  id             String   @id @default(uuid())
+  supplierId     String
+  invoiceId      String?
+  amount         Decimal  @db.Decimal(18, 4)
+  currencyId     String
+  paidAt         DateTime
+  paymentMethodAccountId String
+  reference      String?
+
+  supplier Supplier         @relation(fields: [supplierId], references: [id])
+  invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id])
+}
+
+model GRN {
+  id              String   @id @default(uuid())
+  grnNumber       String   @unique
+  supplierId      String
+  receiptDate     DateTime
+  deliveryReference String?
+  receivingUserId String
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  supplier Supplier  @relation(fields: [supplierId], references: [id])
+  lines    GRNLine[]
+  lots     Lot[]
+}
+
+model GRNLine {
+  id               String  @id @default(uuid())
+  grnId            String
+  poLineId         String?
+  productId        String
+  receivedQty      Decimal @db.Decimal(18, 4)
+  rejectedQty      Decimal @default(0) @db.Decimal(18, 4)
+  inspectionNotes  String?
+
+  grn     GRN                @relation(fields: [grnId], references: [id])
+  poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
+  product Product            @relation(fields: [productId], references: [id])
+  lots    Lot[]
+}
+
+model Lot {
+  id              String   @id @default(uuid())
+  lotCode         String   @unique
+  grnId           String?
+  grnLineId       String?
+  supplierId      String?
+  productId       String
+  originalCurrencyId String
+  sourceUnitPrice Decimal  @db.Decimal(18, 4)
+  exchangeRate    Decimal  @db.Decimal(18, 6) // PKR per 1 unit of originalCurrency, locked at receipt
+  notes           String?
+  createdAt       DateTime @default(now())
+
+  grn        GRN?     @relation(fields: [grnId], references: [id])
+  grnLine    GRNLine? @relation(fields: [grnLineId], references: [id])
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  product    Product  @relation(fields: [productId], references: [id])
+  costLayers CostLayer[]
+  landedCosts LandedCostAllocation[]
+}
+
+model LandedCostAllocation {
+  id               String   @id @default(uuid())
+  lotId            String
+  costType         String // freight | handling | other
+  amount           Decimal  @db.Decimal(18, 4)
+  currencyId       String
+  allocationMethod String   @default("by_piece")
+  appliedAt        DateTime @default(now())
+  approvedByUserId String
+
+  lot Lot @relation(fields: [lotId], references: [id])
+}
+
+// CostLayer is the unit stock valuation and COGS draw from.
+// Grading transfers split a cost layer's quantity into new grade-specific
+// cost layers at the SAME unitCost (quantity + value conservation).
+model CostLayer {
+  id                String   @id @default(uuid())
+  lotId             String
+  gradeId           String
+  binId             String
+  quantityOriginal  Decimal  @db.Decimal(18, 4)
+  quantityRemaining Decimal  @db.Decimal(18, 4)
+  unitCost          Decimal  @db.Decimal(18, 4) // landed cost per piece, fixed at creation
+  splitFromLayerId  String?
+  createdAt         DateTime @default(now())
+
+  lot       Lot             @relation(fields: [lotId], references: [id])
+  grade     Grade           @relation(fields: [gradeId], references: [id])
+  bin       Bin             @relation(fields: [binId], references: [id])
+  splitFrom CostLayer?      @relation("CostLayerSplit", fields: [splitFromLayerId], references: [id])
+  splitInto CostLayer[]     @relation("CostLayerSplit")
+  movements StockMovement[]
+  stockStates StockState[]
+  individualItems IndividualItem[]
+
+  @@index([lotId, gradeId, binId])
+}
+
+// ---------- Stock & movements (Stage 1) ----------
+
+model StockMovement {
+  id            String   @id @default(uuid())
+  type          String   // receive_to_inspection | grading_transfer | bin_transfer | reserve | release | pick | dispatch | return_receipt | return_to_bulk | write_off | count_adjustment | supplier_return_dispatch
+  productId     String
+  gradeId       String
+  binId         String
+  costLayerId   String
+  quantity      Decimal  @db.Decimal(18, 4) // always positive; direction implied by `type`
+  relatedDocumentType String?
+  relatedDocumentId   String?
+  actorUserId   String
+  occurredAt    DateTime @default(now())
+
+  product   Product   @relation(fields: [productId], references: [id])
+  grade     Grade     @relation(fields: [gradeId], references: [id])
+  bin       Bin       @relation(fields: [binId], references: [id])
+  costLayer CostLayer @relation(fields: [costLayerId], references: [id])
+
+  @@index([productId, gradeId, binId, costLayerId])
+}
+
+// Materialized balance, reconciled against StockMovement. Never written to
+// directly except by the movement-posting service inside the same transaction.
+model StockState {
+  id            String   @id @default(uuid())
+  productId     String
+  gradeId       String
+  binId         String
+  costLayerId   String
+  state         String   // inspection | saleable | picking | packed | dispatched | return_inspection | repair | damaged | supplier_return_dispatched
+  onHandQty     Decimal  @default(0) @db.Decimal(18, 4)
+  reservedQty   Decimal  @default(0) @db.Decimal(18, 4)
+  version       Int      @default(0) // optimistic lock for concurrent reservation/dispatch
+
+  product   Product   @relation(fields: [productId], references: [id])
+  grade     Grade     @relation(fields: [gradeId], references: [id])
+  bin       Bin       @relation(fields: [binId], references: [id])
+  costLayer CostLayer @relation(fields: [costLayerId], references: [id])
+
+  @@unique([productId, gradeId, binId, costLayerId, state])
+}
+
+model IndividualItem {
+  id                 String   @id @default(uuid())
+  productId          String
+  sourceCostLayerId  String
+  gradeId            String
+  status             String   @default("listed") // listed | sold | returned_to_bulk
+  createdFromMovementId String
+  returnedToMovementId  String?
+  createdAt          DateTime @default(now())
+
+  product         Product   @relation(fields: [productId], references: [id])
+  sourceCostLayer CostLayer @relation(fields: [sourceCostLayerId], references: [id])
+  grade           Grade     @relation(fields: [gradeId], references: [id])
+  photos          MediaAsset[]
+}
+
+model StockCount {
+  id              String   @id @default(uuid())
+  countDate       DateTime
+  binId           String?
+  status          String   @default("draft") // draft | submitted | approved
+  approvedByUserId String?
+  createdAt       DateTime @default(now())
+
+  lines StockCountLine[]
+}
+
+model StockCountLine {
+  id           String  @id @default(uuid())
+  stockCountId String
+  productId    String
+  gradeId      String
+  costLayerId  String
+  countedQty   Decimal @db.Decimal(18, 4)
+  systemQty    Decimal @db.Decimal(18, 4)
+  varianceQty  Decimal @db.Decimal(18, 4)
+
+  stockCount StockCount @relation(fields: [stockCountId], references: [id])
+}
+
+// ---------- Media (Stage 1) ----------
+
+model MediaAsset {
+  id               String   @id @default(uuid())
+  kind             String // product | lot | order | individual_item | attachment
+  storageKey       String
+  mimeType         String
+  sizeBytes        Int
+  uploadedByUserId String
+  uploadStatus     String   @default("pending") // pending | complete | failed
+  createdAt        DateTime @default(now())
+
+  productPhotos    ProductPhoto[]
+  individualItemId String?
+  individualItem   IndividualItem? @relation(fields: [individualItemId], references: [id])
+}
+
+// ---------- Imports (Stage 1 tooling) ----------
+
+model ImportJob {
+  id             String   @id @default(uuid())
+  kind           String // products | suppliers | opening_stock
+  fileRef        String
+  status         String   @default("pending") // pending | validated | committed | failed
+  allOrNothing   Boolean  @default(true)
+  resultSummary  Json?
+  errors         Json?
+  createdAt      DateTime @default(now())
+}
+
+// ---------- Exchange rates (Stage 1, used from Stage 2) ----------
+
+model ExchangeRateSnapshot {
+  id               String   @id @default(uuid())
+  fromCurrencyId   String
+  toCurrencyId     String // PKR by convention
+  rate             Decimal  @db.Decimal(18, 6)
+  source           String
+  capturedAt       DateTime @default(now())
+  isManualOverride Boolean  @default(false)
+  overrideReason   String?
+  overrideByUserId String?
+}

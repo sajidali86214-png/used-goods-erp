@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Used Goods ERP",
+    "slug": "used-goods-erp",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "REPLACE.WITH.BUSINESS.OWNED.BUNDLE.ID"
+    },
+    "android": {
+      "package": "REPLACE.WITH.BUSINESS.OWNED.PACKAGE.NAME"
+    }
+  }
+}
