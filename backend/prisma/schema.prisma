@@ -577,7 +577,8 @@ model Customer {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  orders SalesOrder[]
+  orders          SalesOrder[]
+  paymentReceipts PaymentReceipt[]
 }
 
 model SalesOrder {
@@ -596,11 +597,12 @@ model SalesOrder {
   notes             String?
   createdAt         DateTime @default(now())
 
-  customer       Customer         @relation(fields: [customerId], references: [id])
-  lines          SalesOrderLine[]
-  shipments      Shipment[]
-  returnRequests ReturnRequest[]
-  refunds        Refund[]
+  customer           Customer            @relation(fields: [customerId], references: [id])
+  lines              SalesOrderLine[]
+  shipments          Shipment[]
+  returnRequests     ReturnRequest[]
+  refunds            Refund[]
+  paymentAllocations PaymentAllocation[]
 
   @@index([channelId, externalOrderId]) // duplicate-order detection (screenshot flow, Stage 3)
 }
@@ -761,6 +763,56 @@ model Refund {
   order         SalesOrder     @relation(fields: [orderId], references: [id])
 }
 
+// Customer receipt against one or more orders (spec section 9: Fleek/other
+// channel GBP receipts, partial payments, many-to-many receipt<->order
+// allocation). The exchange rate is locked onto the receipt at the moment
+// it's recorded and never rewritten by a later rate refresh (acceptance
+// test #13); the actual GBP->PKR conversion is a separate later event
+// (CurrencyConversion below) with its own rate, distinct from this
+// indicative/locked receipt rate (spec section 9).
+model PaymentReceipt {
+  id                     String   @id @default(uuid())
+  customerId             String?
+  currencyId             String
+  amount                 Decimal  @db.Decimal(18, 4)
+  receivedAt             DateTime
+  destinationAccountId   String
+  bankReference          String?
+  exchangeRateSnapshotId String
+  createdAt              DateTime @default(now())
+
+  customer           Customer?           @relation(fields: [customerId], references: [id])
+  destinationAccount Account             @relation(fields: [destinationAccountId], references: [id])
+  allocations        PaymentAllocation[]
+}
+
+model PaymentAllocation {
+  id               String  @id @default(uuid())
+  paymentReceiptId String
+  orderId          String
+  amount           Decimal @db.Decimal(18, 4)
+
+  paymentReceipt PaymentReceipt @relation(fields: [paymentReceiptId], references: [id])
+  order          SalesOrder     @relation(fields: [orderId], references: [id])
+}
+
+// GBP held in a GBP account and later converted to PKR are separate
+// transactions with their own rate — never assume the receipt's locked rate
+// equals the eventual conversion rate (spec section 9).
+model CurrencyConversion {
+  id            String   @id @default(uuid())
+  fromAccountId String
+  toAccountId   String
+  fromAmount    Decimal  @db.Decimal(18, 4)
+  toAmount      Decimal  @db.Decimal(18, 4)
+  rate          Decimal  @db.Decimal(18, 6)
+  bankCharges   Decimal? @db.Decimal(18, 4)
+  convertedAt   DateTime @default(now())
+
+  fromAccount Account @relation("ConversionFrom", fields: [fromAccountId], references: [id])
+  toAccount   Account @relation("ConversionTo", fields: [toAccountId], references: [id])
+}
+
 model Cancellation {
   id               String   @id @default(uuid())
   orderLineId      String
@@ -786,9 +838,12 @@ model Account {
 
   ledgerEntries     LedgerEntry[]
   expenses          Expense[]
-  transfersFrom     Transfer[]         @relation("TransferFrom")
-  transfersTo       Transfer[]         @relation("TransferTo")
+  transfersFrom     Transfer[]           @relation("TransferFrom")
+  transfersTo       Transfer[]           @relation("TransferTo")
   ownerTransactions OwnerTransaction[]
+  paymentReceipts   PaymentReceipt[]
+  conversionsFrom   CurrencyConversion[] @relation("ConversionFrom")
+  conversionsTo     CurrencyConversion[] @relation("ConversionTo")
 }
 
 // Double-entry ledger. Balances are always derived by summing entries for an
