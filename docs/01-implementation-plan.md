@@ -39,18 +39,20 @@ A shared `@erp/api-types` or OpenAPI-generated client should eventually be facto
 
 ## 3. Stages (per spec section 20)
 
-### Stage 1 — Inventory & purchasing foundation — DONE (core slice)
+### Stage 1 — Inventory & purchasing foundation — DONE
 - Data model, migrations, seed data. ✅
 - Auth, roles/permissions matrix enforced server-side. ✅
 - Master data: categories, products/SKUs, grades, bins, suppliers, currencies. ✅ (schema; admin UI not built)
-- Purchasing: lots, cost layers, landed-cost allocation on receipt. ✅ — PO/GRN HTTP endpoints for the full draft→approve→advance→receive→invoice-match flow are **not yet built** (schema exists); acceptance test #3 (partial receipt of a prepaid PO) is not yet covered by a test.
+- Purchasing: POs, supplier advances, GRNs (partial/multiple receipts validated against outstanding ordered qty), invoice-to-advance matching, lots, cost layers, landed-cost allocation. ✅ Acceptance test #3.
 - Stock movement ledger (receiving, grading transfer, write-off) with no-negative-stock and concurrency-safe updates (SERIALIZABLE + retry). ✅ Acceptance tests #1, #2.
-- Audit log for all mutations. ✅ (table + used by grade-requirement amendment; not yet wired into every mutation)
-- Individual-item transfer (acceptance test #8) — **not yet built**.
-- Backup job (DB export → encrypted package → Drive) — **not yet built**.
-- Opening-data import tooling (section 17) — **not yet built**.
+- Individual-item transfer (separate for sale / return to bulk). ✅ Acceptance test #8.
+- Stock counts with approval-gated variance posting. ✅ Acceptance test #18.
+- Bulk import validation (all-or-nothing by default, no silent partial documents, no duplicate SKUs). ✅ Acceptance test #17 — built for products; not yet wired up for suppliers/customers/opening-stock (section 17's go-live flow).
+- Idempotency-Key middleware so a retried request never double-posts. ✅ Acceptance test #15.
+- Encrypted DB backup + isolated restore test (pg_dump → AES-256-GCM → checksum → restore into a throwaway DB, verified). ✅ Acceptance test #20, database half. Google Drive upload and media backup need a real owner-provisioned service account — **not built**, see `docs/05-decisions-needed.md`.
+- Audit log exists and is used for grade-requirement amendments; **not yet wired into every sensitive mutation**.
 
-### Stage 2 — Sales, fulfilment, finance, currency — core flow DONE, dashboards/reports not started
+### Stage 2 — Sales, fulfilment, finance, currency — core flow DONE, dashboards/ledger-posting not started
 - Sales orders with mixed/restricted/exact-composition grade requirements. ✅ Acceptance tests #4, #5.
 - FIFO reservation suggestion + SERIALIZABLE reserve/release, safe under concurrency. ✅ Acceptance test #7.
 - Picking (actual composition, grade-restriction enforcement, audited amendment). ✅ Acceptance test #5.
@@ -59,12 +61,12 @@ A shared `@erp/api-types` or OpenAPI-generated client should eventually be facto
 - Returns with inspection-time regrading (cost basis conserved) + partial refunds. ✅ Acceptance test #10.
 - Origin-uncertain return handling with a required documented assumption. ✅ Acceptance test #11.
 - Currency: locked exchange-rate snapshots (append-only, never rewritten), customer receipts (partial, many-to-many order allocation), separate GBP→PKR conversion event. ✅ Acceptance tests #12, #13.
-- Bundle allocation (schema exists, `BundleAllocation` model) — **service/test not yet built** (acceptance test #19).
-- Finance ledger: `Account`/`LedgerEntry`/`Expense`/`Transfer`/`OwnerTransaction`/`PeriodLock` tables exist; **no posting logic, reconciliation, or period-lock enforcement yet** — needs accountant sign-off on posting triggers before building this (spec section 11).
+- Bundle total price and shared discount/shipping allocation, exact deterministic-remainder reconciliation. ✅ Acceptance test #19.
+- All of the above are reachable through real, RBAC-gated HTTP routes (`/sales/*`, `/finance/*`, `/purchasing/*`, `/stock/*`, `/imports/*`), not just service functions.
+- Finance ledger: `Account`/`LedgerEntry`/`Expense`/`Transfer`/`OwnerTransaction`/`PeriodLock` tables exist; **no posting logic, reconciliation, or period-lock enforcement yet** — deliberately not built: spec section 11 wants accountant sign-off on posting triggers (when revenue recognizes, etc.) before this is built.
 - Dashboards and reports — **not started**.
-- HTTP routes exist only for sales orders/reservations/picks/amendments (RBAC-tested); dispatch/cancellation/return/refund/currency are service-level + tests only, no HTTP routes yet.
 
-22 backend tests passing against a real PostgreSQL database as of this update (see `backend/README.md` for the exact list and known limitations).
+39 backend tests passing against a real PostgreSQL database as of this update (see `backend/README.md` for the exact list and known limitations). 17 of the spec's 20 acceptance tests are covered; the only one not attempted is #14 (screenshot-assisted drafts), deliberately deferred to Stage 3 since it needs a real, owner-approved OCR/extraction service (spec section 21 explicitly warns against assuming one is free or already connected).
 
 ### Stage 3 — Screenshot-assisted drafts, scanning/labels, polish
 - Screenshot-to-draft extraction (explicitly untrusted input, human confirmation required before posting).
