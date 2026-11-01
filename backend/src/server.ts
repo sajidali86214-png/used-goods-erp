@@ -1,6 +1,7 @@
 import "./config/env.js";
 import Fastify from "fastify";
 import { authPlugin } from "./middleware/auth.js";
+import { idempotencyPlugin } from "./middleware/idempotency.js";
 import { authRoutes } from "./modules/auth/authRoutes.js";
 import { stockRoutes } from "./modules/stock/stockRoutes.js";
 import { salesRoutes } from "./modules/sales/salesRoutes.js";
@@ -11,6 +12,7 @@ export async function buildServer() {
   const app = Fastify({ logger: true });
 
   await app.register(authPlugin);
+  await app.register(idempotencyPlugin);
   await app.register(authRoutes);
   await app.register(stockRoutes);
   await app.register(salesRoutes);

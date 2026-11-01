@@ -917,3 +917,20 @@ model PeriodLock {
   reopenedAt       DateTime?
   reopenReason     String?
 }
+
+// Caches a mutating request's response by client-supplied Idempotency-Key so
+// a retried request (e.g. after a timeout where the client never saw the
+// first response) replays the same result instead of creating a second
+// order/payment/GRN/movement set (spec: never treat a repeated network
+// request as authorization to post a transaction twice; acceptance test #15).
+model IdempotencyKey {
+  id           String   @id @default(uuid())
+  key          String
+  method       String
+  path         String
+  statusCode   Int
+  responseBody String
+  createdAt    DateTime @default(now())
+
+  @@unique([key, method, path])
+}
