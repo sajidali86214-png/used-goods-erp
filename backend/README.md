@@ -1,9 +1,9 @@
-# Backend (Stage 1)
+# Backend (Stage 1 + Stage 2 core)
 
 Fastify + TypeScript + Prisma/PostgreSQL. Implements the data model in
 `../docs/02-data-model.md` and the permission matrix in
-`../docs/03-permission-matrix.md`, Stage 1 slice only (see `prisma/schema.prisma`
-header comment).
+`../docs/03-permission-matrix.md` (see `prisma/schema.prisma` header comment
+for exactly which tables exist).
 
 ## Setup
 
@@ -28,16 +28,27 @@ test database before running:
 npm test
 ```
 
-Covers (see `tests/`):
-- Acceptance test #1 — grading conserves quantity and cost (`tests/grading.test.ts`).
-- Acceptance test #2 — a separately purchased cheaper Grade C lot keeps its own cost layer (`tests/grading.test.ts`).
-- Acceptance test #16 — a role without `cost.view` is denied by the backend regardless of what the client sends, verified both as a unit test of the middleware (`tests/rbac.test.ts`) and as a real HTTP request through the Fastify app via `inject()` — 401 with no token, 403 for a picker, 200 for finance (`tests/rbac-http.test.ts`).
-- No-negative-stock: a write-off larger than remaining quantity is rejected.
+Test files map to spec acceptance tests (`docs/01-implementation-plan.md` has the full checklist):
+- `tests/grading.test.ts` — #1 (grading conserves quantity/cost), #2 (separately purchased cheaper Grade C keeps its own cost layer), plus no-negative-stock on write-off.
+- `tests/sales.test.ts` — #4 (mixed-grade order, no promised ratio), #5 (A-only restricted order rejects Grade B unless amended), #6 (gross-profit worked example: revenue 45000 / cost 28000 / GP 17000), #7 (two concurrent reservations for the last 10 pieces — exactly one wins).
+- `tests/dispatch-cancel.test.ts` — #9 (partial dispatch, then cancel the remaining unshipped quantity).
+- `tests/returns.test.ts` — #10 (regraded return keeps original cost basis, partial refund), #11 (origin-uncertain return requires an explicit documented assumption, blocks excess returns).
+- `tests/currency.test.ts` — #12 (partial GBP receipt + later conversion at a different real rate; Fleek commission defaults to zero), #13 (refreshing exchange rates never changes an already-posted snapshot or the lot/cost it priced).
+- `tests/rbac.test.ts` + `tests/rbac-http.test.ts` + `tests/sales-http.test.ts` — #16 (backend denies by permission regardless of the client), at both the middleware-unit and real-HTTP level.
 
-All of the above were run against a real local PostgreSQL 17 instance (not mocked) as of this writing; `npm run build` and `npm test` both pass.
+22 tests passing against a real local PostgreSQL 17 instance (not mocked) as of this writing; `npm run build` and `npm test` both pass.
 
-## Known limitations (Stage 1 scaffold, be honest about what's not here yet)
+## Known limitations — be honest about what's not here yet
 
-- No DB-level CHECK constraints yet (quantity/cost non-negativity is enforced in the service layer only, inside SERIALIZABLE transactions — see `docs/02-data-model.md` section 9). Adding redundant CHECK constraints via a follow-up migration is recommended hardening, not yet done.
-- Purchase orders, GRN line → multi-receipt reconciliation, opening-data import, and the backup job are specified in the data model/plan but not yet implemented as routes — only the receiving → grading → cost-layer core is wired end-to-end in this pass.
-- Stage 2/3 tables (sales, finance, returns, screenshots) are designed in `docs/02-data-model.md` but not yet in `schema.prisma`.
+Not implemented at all:
+- Acceptance test #3 (partial receipt of a prepaid PO reconciling payment/receipt) — PO/GRN HTTP endpoints beyond the core receive→grade flow don't exist yet; the schema does.
+- Acceptance test #8 (individual-item separate-for-sale / return-to-bulk).
+- Acceptance tests #14, #15, #17, #18, #19, #20 — screenshot-assisted drafts (Stage 3), idempotent-retry handling, bulk import validation, physical stock counts, bundle-total-price allocation (schema exists, no service), and backup/restore.
+- Finance ledger posting logic, reconciliation, and period locks — tables exist (`Account`/`LedgerEntry`/`Expense`/`Transfer`/`OwnerTransaction`/`PeriodLock`) but nothing posts to them yet; spec section 11 explicitly wants accountant sign-off on posting triggers before this is built.
+- Dashboards/reports.
+- HTTP routes for dispatch, cancellation, returns, refunds, and currency/payments — these are service-level + tested, but not yet exposed as `/sales/*`-style endpoints the way order/reservation/pick/amend already are.
+
+Partial/hardening gaps:
+- No DB-level CHECK constraints yet (quantity/cost non-negativity is enforced in the service layer only, inside SERIALIZABLE transactions — see `docs/02-data-model.md` section 9).
+- Audit log exists and is used for grade-requirement amendments, but isn't yet wired into every sensitive mutation.
+- Opening-data import and the backup job are specified but not built.

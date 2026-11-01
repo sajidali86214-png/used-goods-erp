@@ -39,21 +39,32 @@ A shared `@erp/api-types` or OpenAPI-generated client should eventually be facto
 
 ## 3. Stages (per spec section 20)
 
-### Stage 1 — Inventory & purchasing foundation (THIS SESSION starts here)
-- Data model, migrations, seed data.
-- Auth, roles/permissions matrix enforced server-side.
-- Master data: categories, products/SKUs, grades, bins, suppliers, currencies.
-- Purchasing: POs, supplier advances/payments, GRNs, grading-with-conservation, lots, cost layers, landed-cost allocation.
-- Stock movement ledger (receiving, grading transfer, bin transfer) with no-negative-stock and concurrency-safe updates.
-- Audit log for all mutations.
-- Backup job skeleton (DB export → encrypted package → Drive), acceptance tests 1, 2, 3, 7 (partial), 16, 17, 18.
-- Opening-data import tooling (section 17) — minimal CSV import for products/suppliers/opening stock.
+### Stage 1 — Inventory & purchasing foundation — DONE (core slice)
+- Data model, migrations, seed data. ✅
+- Auth, roles/permissions matrix enforced server-side. ✅
+- Master data: categories, products/SKUs, grades, bins, suppliers, currencies. ✅ (schema; admin UI not built)
+- Purchasing: lots, cost layers, landed-cost allocation on receipt. ✅ — PO/GRN HTTP endpoints for the full draft→approve→advance→receive→invoice-match flow are **not yet built** (schema exists); acceptance test #3 (partial receipt of a prepaid PO) is not yet covered by a test.
+- Stock movement ledger (receiving, grading transfer, write-off) with no-negative-stock and concurrency-safe updates (SERIALIZABLE + retry). ✅ Acceptance tests #1, #2.
+- Audit log for all mutations. ✅ (table + used by grade-requirement amendment; not yet wired into every mutation)
+- Individual-item transfer (acceptance test #8) — **not yet built**.
+- Backup job (DB export → encrypted package → Drive) — **not yet built**.
+- Opening-data import tooling (section 17) — **not yet built**.
 
-### Stage 2 — Sales, fulfilment, finance, currency
-- Sales orders, bundle allocation, mixed/restricted grade requirements, reservations with row-locking, picking, shipments, returns/refunds.
-- Currency handling, exchange-rate snapshots, Fleek GBP flow.
-- Finance ledger: subledgers, expenses, reconciliation, period lock.
-- Dashboards and reports.
+### Stage 2 — Sales, fulfilment, finance, currency — core flow DONE, dashboards/reports not started
+- Sales orders with mixed/restricted/exact-composition grade requirements. ✅ Acceptance tests #4, #5.
+- FIFO reservation suggestion + SERIALIZABLE reserve/release, safe under concurrency. ✅ Acceptance test #7.
+- Picking (actual composition, grade-restriction enforcement, audited amendment). ✅ Acceptance test #5.
+- Profitability from actual picked cost layers. ✅ Acceptance test #6.
+- Partial dispatch + cancellation of the unshipped remainder. ✅ Acceptance test #9.
+- Returns with inspection-time regrading (cost basis conserved) + partial refunds. ✅ Acceptance test #10.
+- Origin-uncertain return handling with a required documented assumption. ✅ Acceptance test #11.
+- Currency: locked exchange-rate snapshots (append-only, never rewritten), customer receipts (partial, many-to-many order allocation), separate GBP→PKR conversion event. ✅ Acceptance tests #12, #13.
+- Bundle allocation (schema exists, `BundleAllocation` model) — **service/test not yet built** (acceptance test #19).
+- Finance ledger: `Account`/`LedgerEntry`/`Expense`/`Transfer`/`OwnerTransaction`/`PeriodLock` tables exist; **no posting logic, reconciliation, or period-lock enforcement yet** — needs accountant sign-off on posting triggers before building this (spec section 11).
+- Dashboards and reports — **not started**.
+- HTTP routes exist only for sales orders/reservations/picks/amendments (RBAC-tested); dispatch/cancellation/return/refund/currency are service-level + tests only, no HTTP routes yet.
+
+22 backend tests passing against a real PostgreSQL database as of this update (see `backend/README.md` for the exact list and known limitations).
 
 ### Stage 3 — Screenshot-assisted drafts, scanning/labels, polish
 - Screenshot-to-draft extraction (explicitly untrusted input, human confirmation required before posting).
