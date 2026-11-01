@@ -1,7 +1,8 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
-import { commitProductImport } from "../src/modules/imports/importService.js";
+import { commitProductImport, commitOpeningStockImport } from "../src/modules/imports/importService.js";
+import { seedReferenceData } from "./helpers.js";
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -73,5 +74,46 @@ describe("acceptance test #17: invalid and duplicate rows never produce a silent
     const products = await prisma.product.findMany({ where: { skuCode: sku } });
     expect(products).toHaveLength(1);
     expect(products[0]!.name).toBe("Original Name"); // never overwritten
+  });
+});
+
+describe("opening-stock import (spec section 17 go-live cutover)", () => {
+  it("creates a lot/cost-layer/saleable-state per row and never duplicates the same file", async () => {
+    const { product, currency, bin } = await seedReferenceData();
+    const grade = await prisma.grade.upsert({ where: { code: "A" }, update: {}, create: { code: "A", label: "Grade A" } });
+    const fileRef = `opening-stock-${randomUUID()}.csv`;
+
+    const job = await commitOpeningStockImport({
+      fileRef,
+      actorUserId: (await prisma.user.create({ data: { name: "Importer", email: `importer-${randomUUID()}@example.com`, passwordHash: "x" } })).id,
+      rows: [
+        { skuCode: product.skuCode, gradeCode: grade.code, binCode: bin.code, quantity: 25, unitCost: 450, currencyId: currency.id, costIsEstimated: true },
+      ],
+    });
+    expect(job.status).toBe("committed");
+
+    const state = await prisma.stockState.findFirst({
+      where: { productId: product.id, gradeId: grade.id, binId: bin.id, state: "saleable" },
+    });
+    expect(state?.onHandQty.toNumber()).toBe(25);
+
+    const movement = await prisma.stockMovement.findFirst({ where: { type: "opening_stock", productId: product.id } });
+    expect(movement?.quantity.toNumber()).toBe(25);
+
+    // Re-running the exact same file must be rejected, not silently duplicate the balance.
+    await expect(
+      commitOpeningStockImport({
+        fileRef,
+        actorUserId: movement!.actorUserId,
+        rows: [
+          { skuCode: product.skuCode, gradeCode: grade.code, binCode: bin.code, quantity: 25, unitCost: 450, currencyId: currency.id },
+        ],
+      }),
+    ).rejects.toThrow(/was already committed/);
+
+    const stateAfterRetry = await prisma.stockState.findFirst({
+      where: { productId: product.id, gradeId: grade.id, binId: bin.id, state: "saleable" },
+    });
+    expect(stateAfterRetry?.onHandQty.toNumber()).toBe(25); // unchanged — no duplicate balance
   });
 });
