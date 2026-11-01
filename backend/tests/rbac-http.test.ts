@@ -97,4 +97,22 @@ describe("acceptance test #16 (HTTP): backend denies cost.view to a picker", () 
     });
     expect(res.statusCode).toBe(200);
   });
+
+  it("GET /auth/me returns identity, roles, and the actual permission set", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/auth/me",
+      headers: { authorization: `Bearer ${pickerToken}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.roles).toContain("picker");
+    expect(body.permissions).not.toContain("cost.view");
+    expect(body.permissions).toContain("order.pick");
+  });
+
+  it("GET /auth/me returns 401 with no token", async () => {
+    const res = await app.inject({ method: "GET", url: "/auth/me" });
+    expect(res.statusCode).toBe(401);
+  });
 });
