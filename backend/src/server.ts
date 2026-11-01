@@ -10,6 +10,8 @@ import { purchasingRoutes } from "./modules/purchasing/purchasingRoutes.js";
 import { importRoutes } from "./modules/imports/importRoutes.js";
 import { reportRoutes } from "./modules/reports/reportRoutes.js";
 import { masterDataRoutes } from "./modules/masterdata/masterDataRoutes.js";
+import { usersRoutes } from "./modules/users/usersRoutes.js";
+import { auditRoutes } from "./modules/audit/auditRoutes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -24,6 +26,8 @@ export async function buildServer() {
   await app.register(importRoutes);
   await app.register(reportRoutes);
   await app.register(masterDataRoutes);
+  await app.register(usersRoutes);
+  await app.register(auditRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 
