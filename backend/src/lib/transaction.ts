@@ -11,7 +11,7 @@ import { prisma } from "./prisma.js";
  */
 export async function runSerializable<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
-  maxRetries = 3,
+  maxRetries = 8,
 ): Promise<T> {
   let attempt = 0;
   // eslint-disable-next-line no-constant-condition
@@ -27,6 +27,9 @@ export async function runSerializable<T>(
       if (!isConflict || attempt >= maxRetries) {
         throw err;
       }
+      // Small randomized backoff so competing retries don't lock-step collide again.
+      const backoffMs = Math.floor(Math.random() * 25 * attempt);
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
   }
 }

@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { authPlugin } from "./middleware/auth.js";
 import { authRoutes } from "./modules/auth/authRoutes.js";
 import { stockRoutes } from "./modules/stock/stockRoutes.js";
+import { salesRoutes } from "./modules/sales/salesRoutes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -10,6 +11,7 @@ export async function buildServer() {
   await app.register(authPlugin);
   await app.register(authRoutes);
   await app.register(stockRoutes);
+  await app.register(salesRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

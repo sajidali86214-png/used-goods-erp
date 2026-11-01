@@ -1,10 +1,16 @@
-// Data model implementing docs/02-data-model.md — STAGE 1 SLICE ONLY.
-// This file currently contains identity/access, master data, suppliers,
-// purchasing, stock/movements, media, and import-job tables.
-// Stage 2 (Customer, SalesOrder, Reservation, Shipment, Return, Refund,
-// Account, LedgerEntry, Expense, Transfer, PeriodLock, ...) and Stage 3
-// (ScreenshotExtractionJob, ...) are specified in docs/02-data-model.md
-// sections 6-8 and will be added as additive migrations, not yet created.
+// Data model implementing docs/02-data-model.md — STAGE 1 + STAGE 2.
+// Stage 1: identity/access, master data, suppliers, purchasing,
+// stock/movements, media, import-job tables.
+// Stage 2: sales orders, grade requirements, reservations, picking,
+// shipments, returns, refunds, cancellations, and a finance ledger.
+// Stage 3 (ScreenshotExtractionJob, ...) is specified in docs/02-data-model.md
+// section 8 and not yet created.
+//
+// Convention carried over from Stage 1: currencyId/paymentMethodAccountId-style
+// reference-data fields on money-bearing rows are plain string columns, not
+// enforced Prisma relations — validated by lookup in the service layer, not a
+// DB foreign key. Structural/operational entities (orders, lines, grades,
+// bins, cost layers, customers, accounts) use real relations throughout.
 
 generator client {
   provider = "prisma-client-js"
@@ -18,27 +24,27 @@ datasource db {
 // ---------- Identity & access (Stage 1) ----------
 
 model User {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   name         String
-  email        String   @unique
+  email        String    @unique
   passwordHash String
   mfaSecret    String?
-  isActive     Boolean  @default(true)
+  isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
-  roles           UserRole[]
-  auditEvents     AuditEvent[]        @relation("AuditActor")
-  approvalsGiven  Approval[]          @relation("ApprovalDecider")
-  approvalsAsked  Approval[]          @relation("ApprovalRequester")
+  roles          UserRole[]
+  auditEvents    AuditEvent[] @relation("AuditActor")
+  approvalsGiven Approval[]   @relation("ApprovalDecider")
+  approvalsAsked Approval[]   @relation("ApprovalRequester")
 }
 
 model Role {
-  id         String   @id @default(uuid())
-  code       String   @unique // owner | manager | receiving | picker | seller | finance | viewer
-  label      String
-  isSystem   Boolean  @default(true)
+  id       String  @id @default(uuid())
+  code     String  @unique // owner | manager | receiving | picker | seller | finance | viewer
+  label    String
+  isSystem Boolean @default(true)
 
   users       UserRole[]
   permissions RolePermission[]
@@ -48,8 +54,8 @@ model Role {
 model UserRole {
   userId String
   roleId String
-  user   User @relation(fields: [userId], references: [id])
-  role   Role @relation(fields: [roleId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
 
   @@id([userId, roleId])
 }
@@ -73,7 +79,7 @@ model RolePermission {
 
 model ApprovalThreshold {
   id             String  @id @default(uuid())
-  scope          String  // e.g. "refund_pkr", "discount_pct"
+  scope          String // e.g. "refund_pkr", "discount_pct"
   roleId         String
   maxValue       Decimal @db.Decimal(18, 4)
   requiresSecond Boolean @default(false)
@@ -81,17 +87,17 @@ model ApprovalThreshold {
 }
 
 model AuditEvent {
-  id             String    @id @default(uuid())
-  actorUserId    String
-  action         String
-  entityType     String
-  entityId       String
-  beforeJson     Json?
-  afterJson      Json?
-  reason         String?
-  requestId      String?
+  id               String   @id @default(uuid())
+  actorUserId      String
+  action           String
+  entityType       String
+  entityId         String
+  beforeJson       Json?
+  afterJson        Json?
+  reason           String?
+  requestId        String?
   approvedByUserId String?
-  createdAt      DateTime  @default(now())
+  createdAt        DateTime @default(now())
 
   actor User @relation("AuditActor", fields: [actorUserId], references: [id])
 
@@ -99,15 +105,15 @@ model AuditEvent {
 }
 
 model Approval {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   entityType     String
   entityId       String
   requestedById  String
   decidedById    String?
-  decision       String?  // approved | rejected | pending
+  decision       String? // approved | rejected | pending
   reason         String?
-  isSelfApproval Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  isSelfApproval Boolean   @default(false)
+  createdAt      DateTime  @default(now())
   decidedAt      DateTime?
 
   requestedBy User  @relation("ApprovalRequester", fields: [requestedById], references: [id])
@@ -127,30 +133,31 @@ model Category {
 }
 
 model Product {
-  id              String    @id @default(uuid())
-  skuCode         String    @unique
-  name            String
-  categoryId      String
-  description     String?
-  unitOfMeasure   String    @default("piece")
-  brand           String?
-  sizeGroup       String?
-  material        String?
-  defaultSellPrice Decimal? @db.Decimal(18, 4)
-  minPrice        Decimal?  @db.Decimal(18, 4)
-  isActive        Boolean   @default(true)
-  archivedAt      DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  skuCode          String    @unique
+  name             String
+  categoryId       String
+  description      String?
+  unitOfMeasure    String    @default("piece")
+  brand            String?
+  sizeGroup        String?
+  material         String?
+  defaultSellPrice Decimal?  @db.Decimal(18, 4)
+  minPrice         Decimal?  @db.Decimal(18, 4)
+  isActive         Boolean   @default(true)
+  archivedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  category Category @relation(fields: [categoryId], references: [id])
-  photos   ProductPhoto[]
-  grnLines GRNLine[]
-  lots     Lot[]
-  movements StockMovement[]
-  stockStates StockState[]
+  category        Category            @relation(fields: [categoryId], references: [id])
+  photos          ProductPhoto[]
+  grnLines        GRNLine[]
+  lots            Lot[]
+  movements       StockMovement[]
+  stockStates     StockState[]
   individualItems IndividualItem[]
-  poLines  PurchaseOrderLine[]
+  poLines         PurchaseOrderLine[]
+  salesOrderLines SalesOrderLine[]
 }
 
 model ProductPhoto {
@@ -171,10 +178,14 @@ model Grade {
   definition String?
   archivedAt DateTime?
 
-  costLayers     CostLayer[]
-  movements      StockMovement[]
-  stockStates    StockState[]
-  individualItems IndividualItem[]
+  costLayers           CostLayer[]
+  movements            StockMovement[]
+  stockStates          StockState[]
+  individualItems      IndividualItem[]
+  reservations         Reservation[]
+  pickAllocations      PickAllocation[]
+  returnLinesOrigin    ReturnLine[]     @relation("ReturnLineOriginGrade")
+  returnLinesInspected ReturnLine[]     @relation("ReturnLineInspectedGrade")
 }
 
 model Bin {
@@ -183,9 +194,11 @@ model Bin {
   label      String
   archivedAt DateTime?
 
-  costLayers  CostLayer[]
-  movements   StockMovement[]
-  stockStates StockState[]
+  costLayers      CostLayer[]
+  movements       StockMovement[]
+  stockStates     StockState[]
+  reservations    Reservation[]
+  pickAllocations PickAllocation[]
 }
 
 model Currency {
@@ -197,11 +210,11 @@ model Currency {
 }
 
 model SalesChannel {
-  id                 String    @id @default(uuid())
-  code               String    @unique // fleek | local_market | friend | online | instagram
-  label              String
-  defaultCommissionPct Decimal? @db.Decimal(6, 3)
-  archivedAt         DateTime?
+  id                   String    @id @default(uuid())
+  code                 String    @unique // fleek | local_market | friend | online | instagram
+  label                String
+  defaultCommissionPct Decimal?  @db.Decimal(6, 3)
+  archivedAt           DateTime?
 }
 
 model PaymentMethodAccount {
@@ -228,54 +241,54 @@ model ReasonCode {
 // ---------- Suppliers & purchasing (Stage 1) ----------
 
 model Supplier {
-  id              String   @id @default(uuid())
-  name            String
-  contactPerson   String?
-  phone           String?
-  email           String?
-  address         String?
-  categories      String[]
+  id                String   @id @default(uuid())
+  name              String
+  contactPerson     String?
+  phone             String?
+  email             String?
+  address           String?
+  categories        String[]
   defaultCurrencyId String
-  paymentTerms    String?
-  bankDetails     Json?    // access restricted at the API layer via supplier.payment_details.view
-  taxDetails      Json?
-  qualityAgreement String?
-  returnPolicy    String?
-  isActive        Boolean  @default(true)
-  approvalStatus  String   @default("pending")
-  createdAt       DateTime @default(now())
+  paymentTerms      String?
+  bankDetails       Json? // access restricted at the API layer via supplier.payment_details.view
+  taxDetails        Json?
+  qualityAgreement  String?
+  returnPolicy      String?
+  isActive          Boolean  @default(true)
+  approvalStatus    String   @default("pending")
+  createdAt         DateTime @default(now())
 
-  purchaseOrders  PurchaseOrder[]
-  advances        SupplierAdvance[]
-  invoices        SupplierInvoice[]
-  payments        SupplierPayment[]
-  grns            GRN[]
-  lots            Lot[]
+  purchaseOrders PurchaseOrder[]
+  advances       SupplierAdvance[]
+  invoices       SupplierInvoice[]
+  payments       SupplierPayment[]
+  grns           GRN[]
+  lots           Lot[]
 }
 
 model PurchaseOrder {
-  id                 String   @id @default(uuid())
-  poNumber           String   @unique
-  supplierId         String
-  status             String   @default("draft") // draft | approved | cancelled | closed
-  currencyId         String
+  id                  String    @id @default(uuid())
+  poNumber            String    @unique
+  supplierId          String
+  status              String    @default("draft") // draft | approved | cancelled | closed
+  currencyId          String
   expectedReceiptDate DateTime?
-  terms              String?
-  notes              String?
-  createdAt          DateTime @default(now())
+  terms               String?
+  notes               String?
+  createdAt           DateTime  @default(now())
 
-  supplier Supplier @relation(fields: [supplierId], references: [id])
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
   lines    PurchaseOrderLine[]
   advances SupplierAdvance[]
   invoices SupplierInvoice[]
 }
 
 model PurchaseOrderLine {
-  id              String  @id @default(uuid())
+  id              String   @id @default(uuid())
   poId            String
   productId       String
-  orderedQty      Decimal @db.Decimal(18, 4)
-  unitPrice       Decimal @db.Decimal(18, 4)
+  orderedQty      Decimal  @db.Decimal(18, 4)
+  unitPrice       Decimal  @db.Decimal(18, 4)
   discount        Decimal? @db.Decimal(18, 4)
   additionalCosts Decimal? @db.Decimal(18, 4)
 
@@ -285,15 +298,15 @@ model PurchaseOrderLine {
 }
 
 model SupplierAdvance {
-  id                   String   @id @default(uuid())
-  supplierId           String
-  poId                 String?
-  currencyId           String
-  amount               Decimal  @db.Decimal(18, 4)
-  paidAt               DateTime
+  id                     String   @id @default(uuid())
+  supplierId             String
+  poId                   String?
+  currencyId             String
+  amount                 Decimal  @db.Decimal(18, 4)
+  paidAt                 DateTime
   paymentMethodAccountId String
-  status               String   @default("open") // open | partially_applied | applied
-  reference            String?
+  status                 String   @default("open") // open | partially_applied | applied
+  reference              String?
 
   supplier Supplier       @relation(fields: [supplierId], references: [id])
   po       PurchaseOrder? @relation(fields: [poId], references: [id])
@@ -309,34 +322,34 @@ model SupplierInvoice {
   matchedAdvance Decimal  @default(0) @db.Decimal(18, 4)
   status         String   @default("open")
 
-  supplier Supplier       @relation(fields: [supplierId], references: [id])
-  po       PurchaseOrder? @relation(fields: [poId], references: [id])
+  supplier Supplier          @relation(fields: [supplierId], references: [id])
+  po       PurchaseOrder?    @relation(fields: [poId], references: [id])
   payments SupplierPayment[]
 }
 
 model SupplierPayment {
-  id             String   @id @default(uuid())
-  supplierId     String
-  invoiceId      String?
-  amount         Decimal  @db.Decimal(18, 4)
-  currencyId     String
-  paidAt         DateTime
+  id                     String   @id @default(uuid())
+  supplierId             String
+  invoiceId              String?
+  amount                 Decimal  @db.Decimal(18, 4)
+  currencyId             String
+  paidAt                 DateTime
   paymentMethodAccountId String
-  reference      String?
+  reference              String?
 
   supplier Supplier         @relation(fields: [supplierId], references: [id])
   invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id])
 }
 
 model GRN {
-  id              String   @id @default(uuid())
-  grnNumber       String   @unique
-  supplierId      String
-  receiptDate     DateTime
+  id                String   @id @default(uuid())
+  grnNumber         String   @unique
+  supplierId        String
+  receiptDate       DateTime
   deliveryReference String?
-  receivingUserId String
-  notes           String?
-  createdAt       DateTime @default(now())
+  receivingUserId   String
+  notes             String?
+  createdAt         DateTime @default(now())
 
   supplier Supplier  @relation(fields: [supplierId], references: [id])
   lines    GRNLine[]
@@ -344,13 +357,13 @@ model GRN {
 }
 
 model GRNLine {
-  id               String  @id @default(uuid())
-  grnId            String
-  poLineId         String?
-  productId        String
-  receivedQty      Decimal @db.Decimal(18, 4)
-  rejectedQty      Decimal @default(0) @db.Decimal(18, 4)
-  inspectionNotes  String?
+  id              String  @id @default(uuid())
+  grnId           String
+  poLineId        String?
+  productId       String
+  receivedQty     Decimal @db.Decimal(18, 4)
+  rejectedQty     Decimal @default(0) @db.Decimal(18, 4)
+  inspectionNotes String?
 
   grn     GRN                @relation(fields: [grnId], references: [id])
   poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
@@ -359,23 +372,23 @@ model GRNLine {
 }
 
 model Lot {
-  id              String   @id @default(uuid())
-  lotCode         String   @unique
-  grnId           String?
-  grnLineId       String?
-  supplierId      String?
-  productId       String
+  id                 String   @id @default(uuid())
+  lotCode            String   @unique
+  grnId              String?
+  grnLineId          String?
+  supplierId         String?
+  productId          String
   originalCurrencyId String
-  sourceUnitPrice Decimal  @db.Decimal(18, 4)
-  exchangeRate    Decimal  @db.Decimal(18, 6) // PKR per 1 unit of originalCurrency, locked at receipt
-  notes           String?
-  createdAt       DateTime @default(now())
+  sourceUnitPrice    Decimal  @db.Decimal(18, 4)
+  exchangeRate       Decimal  @db.Decimal(18, 6) // PKR per 1 unit of originalCurrency, locked at receipt
+  notes              String?
+  createdAt          DateTime @default(now())
 
-  grn        GRN?     @relation(fields: [grnId], references: [id])
-  grnLine    GRNLine? @relation(fields: [grnLineId], references: [id])
-  supplier   Supplier? @relation(fields: [supplierId], references: [id])
-  product    Product  @relation(fields: [productId], references: [id])
-  costLayers CostLayer[]
+  grn         GRN?                   @relation(fields: [grnId], references: [id])
+  grnLine     GRNLine?               @relation(fields: [grnLineId], references: [id])
+  supplier    Supplier?              @relation(fields: [supplierId], references: [id])
+  product     Product                @relation(fields: [productId], references: [id])
+  costLayers  CostLayer[]
   landedCosts LandedCostAllocation[]
 }
 
@@ -406,14 +419,16 @@ model CostLayer {
   splitFromLayerId  String?
   createdAt         DateTime @default(now())
 
-  lot       Lot             @relation(fields: [lotId], references: [id])
-  grade     Grade           @relation(fields: [gradeId], references: [id])
-  bin       Bin             @relation(fields: [binId], references: [id])
-  splitFrom CostLayer?      @relation("CostLayerSplit", fields: [splitFromLayerId], references: [id])
-  splitInto CostLayer[]     @relation("CostLayerSplit")
-  movements StockMovement[]
-  stockStates StockState[]
+  lot             Lot              @relation(fields: [lotId], references: [id])
+  grade           Grade            @relation(fields: [gradeId], references: [id])
+  bin             Bin              @relation(fields: [binId], references: [id])
+  splitFrom       CostLayer?       @relation("CostLayerSplit", fields: [splitFromLayerId], references: [id])
+  splitInto       CostLayer[]      @relation("CostLayerSplit")
+  movements       StockMovement[]
+  stockStates     StockState[]
   individualItems IndividualItem[]
+  reservations    Reservation[]
+  pickAllocations PickAllocation[]
 
   @@index([lotId, gradeId, binId])
 }
@@ -421,17 +436,17 @@ model CostLayer {
 // ---------- Stock & movements (Stage 1) ----------
 
 model StockMovement {
-  id            String   @id @default(uuid())
-  type          String   // receive_to_inspection | grading_transfer | bin_transfer | reserve | release | pick | dispatch | return_receipt | return_to_bulk | write_off | count_adjustment | supplier_return_dispatch
-  productId     String
-  gradeId       String
-  binId         String
-  costLayerId   String
-  quantity      Decimal  @db.Decimal(18, 4) // always positive; direction implied by `type`
+  id                  String   @id @default(uuid())
+  type                String // receive_to_inspection | grading_transfer | bin_transfer | reserve | release | pick | dispatch | return_receipt | return_to_bulk | write_off | count_adjustment | supplier_return_dispatch
+  productId           String
+  gradeId             String
+  binId               String
+  costLayerId         String
+  quantity            Decimal  @db.Decimal(18, 4) // always positive; direction implied by `type`
   relatedDocumentType String?
   relatedDocumentId   String?
-  actorUserId   String
-  occurredAt    DateTime @default(now())
+  actorUserId         String
+  occurredAt          DateTime @default(now())
 
   product   Product   @relation(fields: [productId], references: [id])
   grade     Grade     @relation(fields: [gradeId], references: [id])
@@ -444,15 +459,15 @@ model StockMovement {
 // Materialized balance, reconciled against StockMovement. Never written to
 // directly except by the movement-posting service inside the same transaction.
 model StockState {
-  id            String   @id @default(uuid())
-  productId     String
-  gradeId       String
-  binId         String
-  costLayerId   String
-  state         String   // inspection | saleable | picking | packed | dispatched | return_inspection | repair | damaged | supplier_return_dispatched
-  onHandQty     Decimal  @default(0) @db.Decimal(18, 4)
-  reservedQty   Decimal  @default(0) @db.Decimal(18, 4)
-  version       Int      @default(0) // optimistic lock for concurrent reservation/dispatch
+  id          String  @id @default(uuid())
+  productId   String
+  gradeId     String
+  binId       String
+  costLayerId String
+  state       String // inspection | saleable | picking | packed | dispatched | return_inspection | repair | damaged | supplier_return_dispatched
+  onHandQty   Decimal @default(0) @db.Decimal(18, 4)
+  reservedQty Decimal @default(0) @db.Decimal(18, 4)
+  version     Int     @default(0) // optimistic lock for concurrent reservation/dispatch
 
   product   Product   @relation(fields: [productId], references: [id])
   grade     Grade     @relation(fields: [gradeId], references: [id])
@@ -463,28 +478,28 @@ model StockState {
 }
 
 model IndividualItem {
-  id                 String   @id @default(uuid())
-  productId          String
-  sourceCostLayerId  String
-  gradeId            String
-  status             String   @default("listed") // listed | sold | returned_to_bulk
+  id                    String   @id @default(uuid())
+  productId             String
+  sourceCostLayerId     String
+  gradeId               String
+  status                String   @default("listed") // listed | sold | returned_to_bulk
   createdFromMovementId String
   returnedToMovementId  String?
-  createdAt          DateTime @default(now())
+  createdAt             DateTime @default(now())
 
-  product         Product   @relation(fields: [productId], references: [id])
-  sourceCostLayer CostLayer @relation(fields: [sourceCostLayerId], references: [id])
-  grade           Grade     @relation(fields: [gradeId], references: [id])
+  product         Product      @relation(fields: [productId], references: [id])
+  sourceCostLayer CostLayer    @relation(fields: [sourceCostLayerId], references: [id])
+  grade           Grade        @relation(fields: [gradeId], references: [id])
   photos          MediaAsset[]
 }
 
 model StockCount {
-  id              String   @id @default(uuid())
-  countDate       DateTime
-  binId           String?
-  status          String   @default("draft") // draft | submitted | approved
+  id               String   @id @default(uuid())
+  countDate        DateTime
+  binId            String?
+  status           String   @default("draft") // draft | submitted | approved
   approvedByUserId String?
-  createdAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
 
   lines StockCountLine[]
 }
@@ -522,14 +537,14 @@ model MediaAsset {
 // ---------- Imports (Stage 1 tooling) ----------
 
 model ImportJob {
-  id             String   @id @default(uuid())
-  kind           String // products | suppliers | opening_stock
-  fileRef        String
-  status         String   @default("pending") // pending | validated | committed | failed
-  allOrNothing   Boolean  @default(true)
-  resultSummary  Json?
-  errors         Json?
-  createdAt      DateTime @default(now())
+  id            String   @id @default(uuid())
+  kind          String // products | suppliers | opening_stock
+  fileRef       String
+  status        String   @default("pending") // pending | validated | committed | failed
+  allOrNothing  Boolean  @default(true)
+  resultSummary Json?
+  errors        Json?
+  createdAt     DateTime @default(now())
 }
 
 // ---------- Exchange rates (Stage 1, used from Stage 2) ----------
@@ -544,4 +559,303 @@ model ExchangeRateSnapshot {
   isManualOverride Boolean  @default(false)
   overrideReason   String?
   overrideByUserId String?
+}
+
+// =====================================================================
+// STAGE 2 — Sales, fulfilment, returns/refunds, finance
+// =====================================================================
+
+// ---------- Sales ----------
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  contact   String?
+  address   String?
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  orders SalesOrder[]
+}
+
+model SalesOrder {
+  id                String   @id @default(uuid())
+  orderNumber       String   @unique
+  channelId         String // SalesChannel.id, plain reference (see file header)
+  externalOrderId   String?
+  customerId        String
+  currencyId        String
+  status            String   @default("draft") // draft | confirmed | partially_cancelled | cancelled | closed
+  paymentStatus     String   @default("unpaid") // unpaid | partially_paid | paid
+  fulfilmentStatus  String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered
+  returnStatus      String   @default("none") // none | requested | authorized | partially_received | received | inspected | resolved
+  refundStatus      String   @default("none") // none | pending | partially_refunded | refunded
+  salespersonUserId String?
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  lines          SalesOrderLine[]
+  shipments      Shipment[]
+  returnRequests ReturnRequest[]
+  refunds        Refund[]
+
+  @@index([channelId, externalOrderId]) // duplicate-order detection (screenshot flow, Stage 3)
+}
+
+model SalesOrderLine {
+  id                   String   @id @default(uuid())
+  orderId              String
+  productId            String
+  gradeRequirementType String   @default("none") // none | allowed_set | exact_composition
+  allowedGradeIds      String[] // used when gradeRequirementType = allowed_set
+  exactGradeQuantities Json? // { [gradeId]: quantity } used when gradeRequirementType = exact_composition
+  quantity             Decimal  @db.Decimal(18, 4)
+  unitPrice            Decimal? @db.Decimal(18, 4)
+  bundleGroupId        String? // lines sharing this id share one bundle total price
+  bundleTotalPrice     Decimal? @db.Decimal(18, 4)
+  discount             Decimal? @db.Decimal(18, 4)
+  taxesFees            Decimal? @db.Decimal(18, 4)
+  createdAt            DateTime @default(now())
+
+  order            SalesOrder        @relation(fields: [orderId], references: [id])
+  product          Product           @relation(fields: [productId], references: [id])
+  bundleAllocation BundleAllocation?
+  reservations     Reservation[]
+  pickAllocations  PickAllocation[]
+  shipmentLines    ShipmentLine[]
+  returnLines      ReturnLine[]
+  cancellations    Cancellation[]
+
+  @@index([bundleGroupId])
+}
+
+// Derived per-line revenue when an order line is part of a bundle total price
+// (spec section 7.1 — allocations must sum exactly to the bundle total).
+model BundleAllocation {
+  id                 String   @id @default(uuid())
+  orderLineId        String   @unique
+  derivedUnitRevenue Decimal  @db.Decimal(18, 4)
+  method             String   @default("proportional_piece_count") // proportional_piece_count | explicit
+  approvedOverride   Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
+}
+
+// Reservations reduce StockState.availableQty (= onHand - reserved) without
+// touching onHand. Posted/released inside a SERIALIZABLE transaction against
+// the same StockState row used by stock.ts, so two orders can never both
+// reserve the same physical pieces (acceptance test #7).
+model Reservation {
+  id          String    @id @default(uuid())
+  orderLineId String
+  costLayerId String
+  gradeId     String
+  binId       String
+  quantity    Decimal   @db.Decimal(18, 4)
+  status      String    @default("provisional") // provisional | confirmed | released
+  expiresAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
+  costLayer CostLayer      @relation(fields: [costLayerId], references: [id])
+  grade     Grade          @relation(fields: [gradeId], references: [id])
+  bin       Bin            @relation(fields: [binId], references: [id])
+
+  @@index([costLayerId, status])
+}
+
+model PickAllocation {
+  id           String   @id @default(uuid())
+  orderLineId  String
+  costLayerId  String
+  gradeId      String
+  binId        String
+  pickedQty    Decimal  @db.Decimal(18, 4)
+  pickerUserId String
+  createdAt    DateTime @default(now())
+
+  orderLine     SalesOrderLine @relation(fields: [orderLineId], references: [id])
+  costLayer     CostLayer      @relation(fields: [costLayerId], references: [id])
+  grade         Grade          @relation(fields: [gradeId], references: [id])
+  bin           Bin            @relation(fields: [binId], references: [id])
+  shipmentLines ShipmentLine[]
+  returnLines   ReturnLine[]
+}
+
+model Shipment {
+  id           String    @id @default(uuid())
+  orderId      String
+  courier      String?
+  trackingRef  String?
+  status       String    @default("unfulfilled") // mirrors SalesOrder.fulfilmentStatus granularity per shipment
+  dispatchedAt DateTime?
+  deliveredAt  DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  order SalesOrder     @relation(fields: [orderId], references: [id])
+  lines ShipmentLine[]
+}
+
+model ShipmentLine {
+  id               String  @id @default(uuid())
+  shipmentId       String
+  orderLineId      String
+  pickAllocationId String?
+  quantity         Decimal @db.Decimal(18, 4)
+
+  shipment       Shipment        @relation(fields: [shipmentId], references: [id])
+  orderLine      SalesOrderLine  @relation(fields: [orderLineId], references: [id])
+  pickAllocation PickAllocation? @relation(fields: [pickAllocationId], references: [id])
+}
+
+model ReturnRequest {
+  id                String   @id @default(uuid())
+  orderId           String
+  status            String   @default("requested") // requested | authorized | partially_received | received | inspected | resolved
+  requestedByUserId String
+  createdAt         DateTime @default(now())
+
+  order   SalesOrder   @relation(fields: [orderId], references: [id])
+  lines   ReturnLine[]
+  refunds Refund[]
+}
+
+model ReturnLine {
+  id                     String   @id @default(uuid())
+  returnRequestId        String
+  orderLineId            String
+  sourcePickAllocationId String?
+  originGradeId          String
+  inspectedGradeId       String?
+  quantity               Decimal  @db.Decimal(18, 4)
+  disposition            String? // resaleable | repair | damaged
+  originUncertain        Boolean  @default(false)
+  assumptionNotes        String?
+  createdAt              DateTime @default(now())
+
+  returnRequest        ReturnRequest   @relation(fields: [returnRequestId], references: [id])
+  orderLine            SalesOrderLine  @relation(fields: [orderLineId], references: [id])
+  sourcePickAllocation PickAllocation? @relation(fields: [sourcePickAllocationId], references: [id])
+  originGrade          Grade           @relation("ReturnLineOriginGrade", fields: [originGradeId], references: [id])
+  inspectedGrade       Grade?          @relation("ReturnLineInspectedGrade", fields: [inspectedGradeId], references: [id])
+}
+
+model Refund {
+  id                     String    @id @default(uuid())
+  returnRequestId        String?
+  orderId                String
+  amount                 Decimal   @db.Decimal(18, 4)
+  currencyId             String
+  status                 String    @default("pending") // pending | partially_refunded | refunded
+  paidAt                 DateTime?
+  paymentMethodAccountId String?
+
+  returnRequest ReturnRequest? @relation(fields: [returnRequestId], references: [id])
+  order         SalesOrder     @relation(fields: [orderId], references: [id])
+}
+
+model Cancellation {
+  id               String   @id @default(uuid())
+  orderLineId      String
+  qty              Decimal  @db.Decimal(18, 4)
+  reason           String
+  feeChargedAmount Decimal? @db.Decimal(18, 4)
+  feeBeneficiary   String?
+  refundDueAmount  Decimal? @db.Decimal(18, 4)
+  approvedByUserId String?
+  createdAt        DateTime @default(now())
+
+  orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
+}
+
+// ---------- Finance ----------
+
+model Account {
+  id         String  @id @default(uuid())
+  label      String
+  currencyId String
+  kind       String // cash | bank | platform_escrow
+  isActive   Boolean @default(true)
+
+  ledgerEntries     LedgerEntry[]
+  expenses          Expense[]
+  transfersFrom     Transfer[]         @relation("TransferFrom")
+  transfersTo       Transfer[]         @relation("TransferTo")
+  ownerTransactions OwnerTransaction[]
+}
+
+// Double-entry ledger. Balances are always derived by summing entries for an
+// account, never stored as an editable field (spec section 11).
+model LedgerEntry {
+  id                  String   @id @default(uuid())
+  accountId           String
+  direction           String // debit | credit
+  amount              Decimal  @db.Decimal(18, 4)
+  currencyId          String
+  relatedDocumentType String
+  relatedDocumentId   String
+  postedAt            DateTime @default(now())
+  reversalOfId        String?
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@index([accountId, postedAt])
+}
+
+model Expense {
+  id                  String   @id @default(uuid())
+  date                DateTime
+  payeeType           String // supplier | other
+  payeeId             String?
+  categoryId          String // ExpenseCategory.id, plain reference
+  currencyId          String
+  amount              Decimal  @db.Decimal(18, 4)
+  paymentStatus       String   @default("unpaid")
+  accountId           String
+  receiptMediaAssetId String?
+  relatedOrderId      String?
+  relatedLotId        String?
+  approvedByUserId    String?
+  createdAt           DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id])
+}
+
+// Explicitly excluded from revenue/expense reports (spec section 11).
+model Transfer {
+  id            String   @id @default(uuid())
+  fromAccountId String
+  toAccountId   String
+  amount        Decimal  @db.Decimal(18, 4)
+  currencyId    String
+  occurredAt    DateTime @default(now())
+
+  fromAccount Account @relation("TransferFrom", fields: [fromAccountId], references: [id])
+  toAccount   Account @relation("TransferTo", fields: [toAccountId], references: [id])
+}
+
+// Owner contributions/withdrawals — excluded from trading P&L (spec section 11).
+model OwnerTransaction {
+  id         String   @id @default(uuid())
+  accountId  String
+  amount     Decimal  @db.Decimal(18, 4)
+  type       String // contribution | withdrawal
+  occurredAt DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id])
+}
+
+model PeriodLock {
+  id               String    @id @default(uuid())
+  periodStart      DateTime
+  periodEnd        DateTime
+  lockedByUserId   String
+  lockedAt         DateTime  @default(now())
+  reopenedByUserId String?
+  reopenedAt       DateTime?
+  reopenReason     String?
 }
