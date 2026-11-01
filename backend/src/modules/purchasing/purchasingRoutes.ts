@@ -9,6 +9,7 @@ import {
   matchInvoiceToAdvance,
 } from "./purchaseOrderService.js";
 import { createGRN } from "./grnService.js";
+import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
   poNumber: z.string().min(1),
@@ -65,6 +66,29 @@ const matchInvoiceSchema = z.object({
 });
 
 export async function purchasingRoutes(app: FastifyInstance) {
+  app.get(
+    "/purchasing/orders",
+    { preHandler: requirePermission("stock.receive") },
+    async () => prisma.purchaseOrder.findMany({ include: { supplier: true, lines: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+  );
+
+  app.get(
+    "/purchasing/orders/:id",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const po = await prisma.purchaseOrder.findUnique({ where: { id }, include: { supplier: true, lines: { include: { product: true } } } });
+      if (!po) return reply.code(404).send({ error: "not_found" });
+      return po;
+    },
+  );
+
+  app.get(
+    "/purchasing/grns",
+    { preHandler: requirePermission("stock.receive") },
+    async () => prisma.gRN.findMany({ include: { supplier: true, lines: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+  );
+
   app.post(
     "/purchasing/orders",
     { preHandler: requirePermission("stock.receive") },

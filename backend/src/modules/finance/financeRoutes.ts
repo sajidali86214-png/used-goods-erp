@@ -14,6 +14,8 @@ import {
   getAccountBalance,
 } from "./ledgerService.js";
 import { lockPeriod, reopenPeriod } from "./periodLockService.js";
+import { prisma } from "../../lib/prisma.js";
+import { Decimal } from "../../lib/money.js";
 
 const lockRateSchema = z.object({
   fromCurrencyId: z.string().uuid(),
@@ -44,7 +46,32 @@ const conversionSchema = z.object({
   bankCharges: z.number().nonnegative().optional(),
 });
 
+const createExpenseSchema = z.object({
+  date: z.coerce.date(),
+  payeeType: z.enum(["supplier", "other"]),
+  payeeId: z.string().uuid().optional(),
+  categoryId: z.string().uuid(),
+  currencyId: z.string().uuid(),
+  amount: z.number().positive(),
+  paymentStatus: z.enum(["unpaid", "paid"]).default("paid"),
+  accountId: z.string().uuid(),
+  relatedOrderId: z.string().uuid().optional(),
+  relatedLotId: z.string().uuid().optional(),
+});
+
 export async function financeRoutes(app: FastifyInstance) {
+  app.post(
+    "/finance/expenses",
+    { preHandler: requirePermission("finance.expense") },
+    async (request, reply) => {
+      const body = createExpenseSchema.parse(request.body);
+      const expense = await prisma.expense.create({
+        data: { ...body, amount: new Decimal(body.amount), approvedByUserId: request.authUser!.id },
+      });
+      return reply.code(201).send(expense);
+    },
+  );
+
   app.post(
     "/finance/exchange-rates",
     { preHandler: requirePermission("finance.payment") },

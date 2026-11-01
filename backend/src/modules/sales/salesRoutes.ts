@@ -9,6 +9,7 @@ import { dispatchPickAllocation } from "./dispatchService.js";
 import { cancelReservedOrPickedQuantity } from "./cancellationService.js";
 import { createReturnRequest, receiveReturnLine, inspectReturnLine } from "./returnService.js";
 import { createRefund, markRefundPaid } from "./refundService.js";
+import { prisma } from "../../lib/prisma.js";
 
 const createOrderSchema = z.object({
   orderNumber: z.string().min(1),
@@ -105,6 +106,48 @@ const createRefundSchema = z.object({
 const markRefundPaidSchema = z.object({ paymentMethodAccountId: z.string().min(1) });
 
 export async function salesRoutes(app: FastifyInstance) {
+  app.get(
+    "/sales/orders",
+    { preHandler: requirePermission("order.create") },
+    async () =>
+      prisma.salesOrder.findMany({
+        include: { customer: true, lines: true },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      }),
+  );
+
+  app.get(
+    "/sales/orders/:id",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const order = await prisma.salesOrder.findUnique({
+        where: { id },
+        include: {
+          customer: true,
+          lines: { include: { product: true, reservations: true, pickAllocations: true } },
+          shipments: { include: { lines: true } },
+          returnRequests: true,
+          refunds: true,
+        },
+      });
+      if (!order) return reply.code(404).send({ error: "not_found" });
+      return order;
+    },
+  );
+
+  app.get(
+    "/sales/returns",
+    { preHandler: requirePermission("return.process") },
+    async () =>
+      prisma.returnRequest.findMany({
+        include: { order: { include: { customer: true } }, lines: true },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      }),
+  );
+
   app.post(
     "/sales/orders",
     { preHandler: requirePermission("order.create") },
