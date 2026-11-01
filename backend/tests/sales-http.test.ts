@@ -108,4 +108,34 @@ describe("sales routes RBAC (HTTP)", () => {
     });
     expect(res.statusCode).toBe(403);
   });
+
+  it("denies a seller (no order.dispatch) posting a dispatch", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/sales/dispatches",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { pickAllocationId: "00000000-0000-0000-0000-000000000000", quantity: 1 },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("denies a seller (no return.process) creating a return request", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/sales/returns",
+      headers: { authorization: `Bearer ${sellerToken}` },
+      payload: { orderId: "00000000-0000-0000-0000-000000000000" },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("denies a picker (no refund.approve) marking a refund paid", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/sales/refunds/00000000-0000-0000-0000-000000000000/mark-paid",
+      headers: { authorization: `Bearer ${pickerToken}` },
+      payload: { paymentMethodAccountId: "manual-test" },
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });

@@ -5,6 +5,10 @@ import { amendGradeRequirement, confirmOrder, createDraftOrder } from "./salesOr
 import { reserveStock, releaseReservation, suggestAllocation } from "./reservationService.js";
 import { pickFromReservation } from "./pickingService.js";
 import { computeLineProfitability } from "./profitabilityService.js";
+import { dispatchPickAllocation } from "./dispatchService.js";
+import { cancelReservedOrPickedQuantity } from "./cancellationService.js";
+import { createReturnRequest, receiveReturnLine, inspectReturnLine } from "./returnService.js";
+import { createRefund, markRefundPaid } from "./refundService.js";
 
 const createOrderSchema = z.object({
   orderNumber: z.string().min(1),
@@ -46,6 +50,58 @@ const amendGradeSchema = z.object({
   addAllowedGradeId: z.string().uuid(),
   reason: z.string().min(1),
 });
+
+const dispatchSchema = z.object({
+  pickAllocationId: z.string().uuid(),
+  quantity: z.number().positive(),
+  shipmentId: z.string().uuid().optional(),
+  courier: z.string().optional(),
+  trackingRef: z.string().optional(),
+});
+
+const cancelSchema = z.object({
+  reservationId: z.string().uuid(),
+  quantity: z.number().positive(),
+  reason: z.string().min(1),
+  feeChargedAmount: z.number().nonnegative().optional(),
+  feeBeneficiary: z.string().optional(),
+  refundDueAmount: z.number().nonnegative().optional(),
+  approvedByUserId: z.string().uuid().optional(),
+});
+
+const createReturnRequestSchema = z.object({ orderId: z.string().uuid() });
+
+const receiveReturnLineSchema = z.object({
+  returnRequestId: z.string().uuid(),
+  orderLineId: z.string().uuid(),
+  costLayerId: z.string().uuid(),
+  sourcePickAllocationId: z.string().uuid().optional(),
+  originGradeId: z.string().uuid(),
+  quantity: z.number().positive(),
+  originUncertain: z.boolean().optional(),
+  assumptionNotes: z.string().optional(),
+});
+
+const inspectReturnLineSchema = z.object({
+  outcomes: z
+    .array(
+      z.object({
+        inspectedGradeId: z.string().uuid(),
+        quantity: z.number().positive(),
+        disposition: z.enum(["resaleable", "repair", "damaged"]),
+      }),
+    )
+    .min(1),
+});
+
+const createRefundSchema = z.object({
+  orderId: z.string().uuid(),
+  returnRequestId: z.string().uuid().optional(),
+  amount: z.number().positive(),
+  currencyId: z.string().uuid(),
+});
+
+const markRefundPaidSchema = z.object({ paymentMethodAccountId: z.string().min(1) });
 
 export async function salesRoutes(app: FastifyInstance) {
   app.post(
@@ -125,6 +181,83 @@ export async function salesRoutes(app: FastifyInstance) {
     async (request) => {
       const { id } = request.params as { id: string };
       return computeLineProfitability(id);
+    },
+  );
+
+  app.post(
+    "/sales/dispatches",
+    { preHandler: requirePermission("order.dispatch") },
+    async (request, reply) => {
+      const body = dispatchSchema.parse(request.body);
+      const result = await dispatchPickAllocation({ ...body, actorUserId: request.authUser!.id });
+      return reply.code(201).send(result);
+    },
+  );
+
+  app.post(
+    "/sales/cancellations",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const body = cancelSchema.parse(request.body);
+      const result = await cancelReservedOrPickedQuantity({ ...body, actorUserId: request.authUser!.id });
+      return reply.code(201).send(result);
+    },
+  );
+
+  app.post(
+    "/sales/returns",
+    { preHandler: requirePermission("return.process") },
+    async (request, reply) => {
+      const body = createReturnRequestSchema.parse(request.body);
+      const returnRequest = await createReturnRequest({ ...body, requestedByUserId: request.authUser!.id });
+      return reply.code(201).send(returnRequest);
+    },
+  );
+
+  app.post(
+    "/sales/returns/lines",
+    { preHandler: requirePermission("return.process") },
+    async (request, reply) => {
+      const body = receiveReturnLineSchema.parse(request.body);
+      const returnLine = await receiveReturnLine({ ...body, actorUserId: request.authUser!.id });
+      return reply.code(201).send(returnLine);
+    },
+  );
+
+  app.post(
+    "/sales/returns/lines/:id/inspect",
+    { preHandler: requirePermission("return.process") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = inspectReturnLineSchema.parse(request.body);
+      const result = await inspectReturnLine({
+        returnLineId: id,
+        outcomes: body.outcomes,
+        actorUserId: request.authUser!.id,
+      });
+      return reply.send(result);
+    },
+  );
+
+  app.post(
+    "/sales/refunds",
+    { preHandler: requirePermission("refund.create") },
+    async (request, reply) => {
+      const body = createRefundSchema.parse(request.body);
+      const refund = await createRefund(body);
+      return reply.code(201).send(refund);
+    },
+  );
+
+  // Marking a refund actually paid is the disbursement step, gated separately from merely requesting one.
+  app.post(
+    "/sales/refunds/:id/mark-paid",
+    { preHandler: requirePermission("refund.approve") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = markRefundPaidSchema.parse(request.body);
+      const refund = await markRefundPaid(id, body.paymentMethodAccountId);
+      return reply.send(refund);
     },
   );
 }
