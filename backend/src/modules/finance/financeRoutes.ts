@@ -13,6 +13,7 @@ import {
   postOwnerTransaction,
   getAccountBalance,
 } from "./ledgerService.js";
+import { lockPeriod, reopenPeriod } from "./periodLockService.js";
 
 const lockRateSchema = z.object({
   fromCurrencyId: z.string().uuid(),
@@ -138,6 +139,27 @@ export async function financeRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const balance = await getAccountBalance(id);
       return { accountId: id, balance: balance.toString() };
+    },
+  );
+
+  app.post(
+    "/finance/periods/lock",
+    { preHandler: requirePermission("period.reopen") },
+    async (request, reply) => {
+      const body = z.object({ periodStart: z.coerce.date(), periodEnd: z.coerce.date() }).parse(request.body);
+      const lock = await lockPeriod({ ...body, lockedByUserId: request.authUser!.id });
+      return reply.code(201).send(lock);
+    },
+  );
+
+  app.post(
+    "/finance/periods/:id/reopen",
+    { preHandler: requirePermission("period.reopen") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = z.object({ reason: z.string().min(1) }).parse(request.body);
+      const lock = await reopenPeriod({ periodLockId: id, reopenedByUserId: request.authUser!.id, reason: body.reason });
+      return reply.send(lock);
     },
   );
 }

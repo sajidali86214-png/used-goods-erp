@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertEqual, sumDecimal } from "../../lib/money.js";
+import { assertPeriodNotLocked } from "./periodLockService.js";
 
 /**
  * Finance ledger posting — DEFAULT policy, not a final accounting decision.
@@ -32,12 +33,23 @@ async function controlAccount(code: string) {
   return prisma.account.findUniqueOrThrow({ where: { code } });
 }
 
-/** Posts a balanced set of entries (debits == credits, per currency) in one transaction. Never partially posts. */
+/**
+ * Posts a balanced set of entries (debits == credits, per currency) in one
+ * transaction. Never partially posts. `postedAt` defaults to now; backdating
+ * it is a caller decision gated by the `backdate.create` permission at the
+ * route layer (spec section 13) — this function only enforces that the
+ * target date isn't inside an already-locked, non-reopened period
+ * (spec section 11/13).
+ */
 export async function postBalanced(params: {
   entries: LedgerEntryInput[];
   relatedDocumentType: string;
   relatedDocumentId: string;
+  postedAt?: Date;
 }) {
+  const postedAt = params.postedAt ?? new Date();
+  await assertPeriodNotLocked(postedAt);
+
   const byCurrency = new Map<string, { debit: Decimal; credit: Decimal }>();
   for (const e of params.entries) {
     const amount = new Decimal(e.amount);
@@ -58,6 +70,7 @@ export async function postBalanced(params: {
           direction: e.direction,
           amount: new Decimal(e.amount),
           currencyId: e.currencyId,
+          postedAt,
           relatedDocumentType: params.relatedDocumentType,
           relatedDocumentId: params.relatedDocumentId,
         },
