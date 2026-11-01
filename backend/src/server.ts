@@ -5,6 +5,7 @@ import { authRoutes } from "./modules/auth/authRoutes.js";
 import { stockRoutes } from "./modules/stock/stockRoutes.js";
 import { salesRoutes } from "./modules/sales/salesRoutes.js";
 import { financeRoutes } from "./modules/finance/financeRoutes.js";
+import { purchasingRoutes } from "./modules/purchasing/purchasingRoutes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -14,6 +15,7 @@ export async function buildServer() {
   await app.register(stockRoutes);
   await app.register(salesRoutes);
   await app.register(financeRoutes);
+  await app.register(purchasingRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

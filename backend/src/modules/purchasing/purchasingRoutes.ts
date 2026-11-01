@@ -1,0 +1,126 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { requirePermission } from "../../middleware/rbac.js";
+import {
+  createPurchaseOrder,
+  approvePurchaseOrder,
+  recordSupplierAdvance,
+  getPurchaseOrderStatus,
+  matchInvoiceToAdvance,
+} from "./purchaseOrderService.js";
+import { createGRN } from "./grnService.js";
+
+const createPOSchema = z.object({
+  poNumber: z.string().min(1),
+  supplierId: z.string().uuid(),
+  currencyId: z.string().uuid(),
+  expectedReceiptDate: z.coerce.date().optional(),
+  terms: z.string().optional(),
+  notes: z.string().optional(),
+  lines: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        orderedQty: z.number().positive(),
+        unitPrice: z.number().nonnegative(),
+        discount: z.number().nonnegative().optional(),
+        additionalCosts: z.number().nonnegative().optional(),
+      }),
+    )
+    .min(1),
+});
+
+const advanceSchema = z.object({
+  supplierId: z.string().uuid(),
+  poId: z.string().uuid().optional(),
+  currencyId: z.string().uuid(),
+  amount: z.number().positive(),
+  paidAt: z.coerce.date(),
+  paymentMethodAccountId: z.string().min(1),
+  reference: z.string().optional(),
+});
+
+const createGRNSchema = z.object({
+  grnNumber: z.string().min(1),
+  supplierId: z.string().uuid(),
+  receiptDate: z.coerce.date(),
+  deliveryReference: z.string().optional(),
+  notes: z.string().optional(),
+  lines: z
+    .array(
+      z.object({
+        poLineId: z.string().uuid().optional(),
+        productId: z.string().uuid(),
+        receivedQty: z.number().positive(),
+        rejectedQty: z.number().nonnegative().optional(),
+        inspectionNotes: z.string().optional(),
+      }),
+    )
+    .min(1),
+});
+
+const matchInvoiceSchema = z.object({
+  invoiceId: z.string().uuid(),
+  matchedAmount: z.number().positive(),
+});
+
+export async function purchasingRoutes(app: FastifyInstance) {
+  app.post(
+    "/purchasing/orders",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const body = createPOSchema.parse(request.body);
+      const po = await createPurchaseOrder(body);
+      return reply.code(201).send(po);
+    },
+  );
+
+  app.post(
+    "/purchasing/orders/:id/approve",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const po = await approvePurchaseOrder(id);
+      return reply.send(po);
+    },
+  );
+
+  app.get(
+    "/purchasing/orders/:id/status",
+    { preHandler: requirePermission("stock.receive") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getPurchaseOrderStatus(id);
+    },
+  );
+
+  app.post(
+    "/purchasing/advances",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = advanceSchema.parse(request.body);
+      const advance = await recordSupplierAdvance(body);
+      return reply.code(201).send(advance);
+    },
+  );
+
+  app.post(
+    "/purchasing/invoices/match",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = matchInvoiceSchema.parse(request.body);
+      const invoice = await matchInvoiceToAdvance(body);
+      return reply.send(invoice);
+    },
+  );
+
+  app.post(
+    "/purchasing/grns",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const body = createGRNSchema.parse(request.body);
+      const grn = await createGRN({ ...body, receivingUserId: request.authUser!.id });
+      return reply.code(201).send(grn);
+    },
+  );
+}
