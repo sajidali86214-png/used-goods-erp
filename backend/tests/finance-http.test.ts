@@ -73,4 +73,22 @@ describe("finance routes RBAC (HTTP)", () => {
     });
     expect(res.statusCode).toBe(403);
   });
+
+  it("denies a picker (no finance.payment) posting an expense to the ledger", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/finance/post/expenses/00000000-0000-0000-0000-000000000000",
+      headers: { authorization: `Bearer ${pickerToken}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("denies a picker (no finance.report.view) reading an account balance", async () => {
+    const res = await app.inject({
+      method: "GET",
+      url: "/finance/accounts/00000000-0000-0000-0000-000000000000/balance",
+      headers: { authorization: `Bearer ${pickerToken}` },
+    });
+    expect(res.statusCode).toBe(403);
+  });
 });

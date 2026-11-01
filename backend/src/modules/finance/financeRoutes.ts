@@ -1,8 +1,18 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
 import { lockExchangeRate, latestRate } from "./currencyService.js";
 import { recordCustomerReceipt, convertCurrency, totalReceivedForOrder } from "./paymentService.js";
+import {
+  postExpense,
+  postSupplierAdvance,
+  postCustomerReceipt,
+  postRefund,
+  postSaleDispatch,
+  postTransfer,
+  postOwnerTransaction,
+  getAccountBalance,
+} from "./ledgerService.js";
 
 const lockRateSchema = z.object({
   fromCurrencyId: z.string().uuid(),
@@ -83,6 +93,51 @@ export async function financeRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const total = await totalReceivedForOrder(id);
       return { orderId: id, totalReceived: total.toString() };
+    },
+  );
+
+  const postById = (fn: (id: string) => Promise<unknown>) =>
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const { id } = request.params as { id: string };
+      const result = await fn(id);
+      return reply.code(201).send(result);
+    };
+
+  app.post("/finance/post/expenses/:id", { preHandler: requirePermission("finance.payment") }, postById(postExpense));
+  app.post(
+    "/finance/post/supplier-advances/:id",
+    { preHandler: requirePermission("finance.payment") },
+    postById(postSupplierAdvance),
+  );
+  app.post(
+    "/finance/post/receipts/:id",
+    { preHandler: requirePermission("finance.payment") },
+    postById(postCustomerReceipt),
+  );
+  app.post("/finance/post/refunds/:id", { preHandler: requirePermission("finance.payment") }, postById(postRefund));
+  app.post(
+    "/finance/post/shipment-lines/:id",
+    { preHandler: requirePermission("finance.payment") },
+    postById(postSaleDispatch),
+  );
+  app.post(
+    "/finance/post/transfers/:id",
+    { preHandler: requirePermission("finance.payment") },
+    postById(postTransfer),
+  );
+  app.post(
+    "/finance/post/owner-transactions/:id",
+    { preHandler: requirePermission("finance.payment") },
+    postById(postOwnerTransaction),
+  );
+
+  app.get(
+    "/finance/accounts/:id/balance",
+    { preHandler: requirePermission("finance.report.view") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      const balance = await getAccountBalance(id);
+      return { accountId: id, balance: balance.toString() };
     },
   );
 }

@@ -831,9 +831,14 @@ model Cancellation {
 
 model Account {
   id         String  @id @default(uuid())
+  code       String? @unique // stable key for seeded control accounts (e.g. "ACCOUNTS_RECEIVABLE"); null for ordinary bank/cash accounts
   label      String
   currencyId String
-  kind       String // cash | bank | platform_escrow
+  kind       String // cash | bank | platform_escrow | control
+  // Determines the report-sign convention for getAccountBalance(): a debit
+  // increases an asset/expense account's balance; a credit increases a
+  // liability/equity/revenue/contra_revenue account's balance.
+  nature     String  @default("asset") // asset | liability | equity | revenue | contra_revenue | expense
   isActive   Boolean @default(true)
 
   ledgerEntries     LedgerEntry[]

@@ -52,6 +52,31 @@ async function main() {
     create: { code: "MAIN", label: "Main warehouse" },
   });
 
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+
+  // Standard control (non-cash) ledger accounts, all PKR-denominated per
+  // spec section 9 (PKR is the base reporting currency). Real bank/cash
+  // accounts are created by the owner in Settings, not seeded here.
+  const controlAccounts: { code: string; label: string; nature: string }[] = [
+    { code: "ACCOUNTS_RECEIVABLE", label: "Accounts Receivable", nature: "asset" },
+    { code: "ACCOUNTS_PAYABLE", label: "Accounts Payable", nature: "liability" },
+    { code: "SUPPLIER_ADVANCES", label: "Supplier Advances", nature: "asset" },
+    { code: "INVENTORY", label: "Inventory", nature: "asset" },
+    { code: "COGS", label: "Cost of Goods Sold", nature: "expense" },
+    { code: "SALES_REVENUE", label: "Sales Revenue", nature: "revenue" },
+    { code: "SALES_RETURNS", label: "Sales Returns & Allowances", nature: "contra_revenue" },
+    { code: "OWNERS_EQUITY", label: "Owner's Equity", nature: "equity" },
+    { code: "BANK_CHARGES", label: "Bank Charges", nature: "expense" },
+    { code: "OPERATING_EXPENSES", label: "Operating Expenses", nature: "expense" },
+  ];
+  for (const account of controlAccounts) {
+    await prisma.account.upsert({
+      where: { code: account.code },
+      update: {},
+      create: { code: account.code, label: account.label, nature: account.nature, currencyId: pkr.id, kind: "control" },
+    });
+  }
+
   const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "owner" } });
   const ownerEmail = process.env.SEED_OWNER_EMAIL ?? "owner@example.com";
   const ownerPassword = process.env.SEED_OWNER_PASSWORD ?? "change-me-now";
