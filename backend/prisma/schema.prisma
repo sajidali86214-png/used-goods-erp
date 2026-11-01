@@ -429,6 +429,7 @@ model CostLayer {
   individualItems IndividualItem[]
   reservations    Reservation[]
   pickAllocations PickAllocation[]
+  returnLines     ReturnLine[]
 
   @@index([lotId, gradeId, binId])
 }
@@ -729,6 +730,7 @@ model ReturnLine {
   returnRequestId        String
   orderLineId            String
   sourcePickAllocationId String?
+  costLayerId            String // the original cost layer these pieces were dispatched from — set explicitly at receipt, never re-derived
   originGradeId          String
   inspectedGradeId       String?
   quantity               Decimal  @db.Decimal(18, 4)
@@ -740,6 +742,7 @@ model ReturnLine {
   returnRequest        ReturnRequest   @relation(fields: [returnRequestId], references: [id])
   orderLine            SalesOrderLine  @relation(fields: [orderLineId], references: [id])
   sourcePickAllocation PickAllocation? @relation(fields: [sourcePickAllocationId], references: [id])
+  costLayer            CostLayer       @relation(fields: [costLayerId], references: [id])
   originGrade          Grade           @relation("ReturnLineOriginGrade", fields: [originGradeId], references: [id])
   inspectedGrade       Grade?          @relation("ReturnLineInspectedGrade", fields: [inspectedGradeId], references: [id])
 }
