@@ -4,6 +4,7 @@ import { requirePermission } from "../../middleware/rbac.js";
 import { prisma } from "../../lib/prisma.js";
 import { gradeTransfer, receiveToInspection, writeOff } from "./stockService.js";
 import { separateForIndividualSale, returnIndividualItemToBulk } from "./individualItemService.js";
+import { createStockCount, submitStockCount, approveStockCountVariance } from "./stockCountService.js";
 
 const receiveSchema = z.object({
   grnLineId: z.string().uuid().optional(),
@@ -49,6 +50,24 @@ const separateIndividualSchema = z.object({
 const returnIndividualSchema = z.object({
   binId: z.string().uuid(),
 });
+
+const createStockCountSchema = z.object({
+  countDate: z.coerce.date(),
+  binId: z.string().uuid().optional(),
+  lines: z
+    .array(
+      z.object({
+        productId: z.string().uuid(),
+        gradeId: z.string().uuid(),
+        binId: z.string().uuid(),
+        costLayerId: z.string().uuid(),
+        countedQty: z.number().nonnegative(),
+      }),
+    )
+    .min(1),
+});
+
+const approveStockCountSchema = z.object({ binId: z.string().uuid() });
 
 export async function stockRoutes(app: FastifyInstance) {
   app.post(
@@ -109,6 +128,41 @@ export async function stockRoutes(app: FastifyInstance) {
         actorUserId: request.authUser!.id,
       });
       return reply.send(item);
+    },
+  );
+
+  app.post(
+    "/stock/counts",
+    { preHandler: requirePermission("stock.count") },
+    async (request, reply) => {
+      const body = createStockCountSchema.parse(request.body);
+      const count = await createStockCount(body);
+      return reply.code(201).send(count);
+    },
+  );
+
+  app.post(
+    "/stock/counts/:id/submit",
+    { preHandler: requirePermission("stock.count") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const count = await submitStockCount(id);
+      return reply.send(count);
+    },
+  );
+
+  app.post(
+    "/stock/counts/:id/approve",
+    { preHandler: requirePermission("stock.count.approve") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = approveStockCountSchema.parse(request.body);
+      const count = await approveStockCountVariance({
+        stockCountId: id,
+        binId: body.binId,
+        approvedByUserId: request.authUser!.id,
+      });
+      return reply.send(count);
     },
   );
 
