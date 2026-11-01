@@ -25,6 +25,7 @@ const createOrderSchema = z.object({
         allowedGradeIds: z.array(z.string().uuid()).optional(),
         exactGradeQuantities: z.record(z.string(), z.number()).optional(),
         unitPrice: z.number().nonnegative().optional(),
+        priceOverrideReason: z.string().optional(),
       }),
     )
     .min(1),
@@ -109,7 +110,11 @@ export async function salesRoutes(app: FastifyInstance) {
     { preHandler: requirePermission("order.create") },
     async (request, reply) => {
       const body = createOrderSchema.parse(request.body);
-      const order = await createDraftOrder(body);
+      const order = await createDraftOrder({
+        ...body,
+        actorUserId: request.authUser!.id,
+        actorHasPriceOverride: request.authUser!.permissions.has("price.override"),
+      });
       return reply.code(201).send(order);
     },
   );

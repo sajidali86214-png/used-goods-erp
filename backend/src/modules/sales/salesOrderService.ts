@@ -8,6 +8,7 @@ interface CreateOrderLineInput {
   allowedGradeIds?: string[];
   exactGradeQuantities?: Record<string, number>;
   unitPrice?: Decimal | number;
+  priceOverrideReason?: string;
 }
 
 interface CreateOrderInput {
@@ -17,11 +18,41 @@ interface CreateOrderInput {
   currencyId: string;
   salespersonUserId?: string;
   lines: CreateOrderLineInput[];
+  actorUserId: string;
+  actorHasPriceOverride: boolean;
 }
 
-/** Creates a draft sales order with its lines. Grade requirement types per spec section 7.2. */
+/**
+ * Creates a draft sales order with its lines. Grade requirement types per
+ * spec section 7.2. Any line priced below the product's configured
+ * `minPrice` is a price override: it requires both the `price.override`
+ * permission (checked here, not just hidden in the UI) and a reason, which
+ * is recorded as an audit event — matching the permission matrix's
+ * "discounts below limits" distinction between Manager/Owner and Seller.
+ */
 export async function createDraftOrder(input: CreateOrderInput) {
-  return prisma.salesOrder.create({
+  const overridesNeeded: { lineIndex: number; productId: string; unitPrice: Decimal; minPrice: Decimal; reason?: string }[] = [];
+
+  for (let i = 0; i < input.lines.length; i++) {
+    const line = input.lines[i]!;
+    if (line.unitPrice === undefined) continue;
+    const product = await prisma.product.findUniqueOrThrow({ where: { id: line.productId } });
+    if (product.minPrice === null) continue;
+    const unitPrice = new Decimal(line.unitPrice);
+    if (unitPrice.lessThan(product.minPrice)) {
+      overridesNeeded.push({ lineIndex: i, productId: line.productId, unitPrice, minPrice: product.minPrice, reason: line.priceOverrideReason });
+    }
+  }
+
+  if (overridesNeeded.length > 0 && !input.actorHasPriceOverride) {
+    throw new Error("One or more lines are priced below the product's minimum price — requires price.override permission");
+  }
+  const missingReason = overridesNeeded.find((o) => !o.reason);
+  if (missingReason) {
+    throw new Error(`Line ${missingReason.lineIndex + 1} is priced below minimum and needs a priceOverrideReason`);
+  }
+
+  const order = await prisma.salesOrder.create({
     data: {
       orderNumber: input.orderNumber,
       channelId: input.channelId,
@@ -42,6 +73,23 @@ export async function createDraftOrder(input: CreateOrderInput) {
     },
     include: { lines: true },
   });
+
+  for (const override of overridesNeeded) {
+    const createdLine = order.lines[override.lineIndex]!;
+    await prisma.auditEvent.create({
+      data: {
+        actorUserId: input.actorUserId,
+        action: "price_override",
+        entityType: "SalesOrderLine",
+        entityId: createdLine.id,
+        beforeJson: { minPrice: override.minPrice.toString() },
+        afterJson: { unitPrice: override.unitPrice.toString() },
+        reason: override.reason,
+      },
+    });
+  }
+
+  return order;
 }
 
 export async function confirmOrder(orderId: string) {

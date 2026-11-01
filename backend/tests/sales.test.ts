@@ -40,6 +40,8 @@ describe("acceptance test #4: mixed-grade order with no promised ratio", () => {
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 60, gradeRequirementType: "none", unitPrice: 900 }],
     });
     const line = order.lines[0]!;
@@ -107,6 +109,8 @@ describe("acceptance test #5: A-only restricted order rejects Grade B unless ame
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [
         {
           productId: product.id,
@@ -196,6 +200,8 @@ describe("acceptance test #6: gross profit from two lots matches the worked exam
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 50, gradeRequirementType: "none", unitPrice: 900 }],
     });
     const line = order.lines[0]!;
@@ -249,6 +255,8 @@ describe("acceptance test #7: two concurrent reservations for the last ten piece
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [
         { productId: product.id, quantity: 10, gradeRequirementType: "none" },
         { productId: product.id, quantity: 10, gradeRequirementType: "none" },

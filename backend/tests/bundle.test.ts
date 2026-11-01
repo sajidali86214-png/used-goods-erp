@@ -11,7 +11,7 @@ afterAll(async () => {
 
 describe("acceptance test #19: bundle total, discount, and shipping allocate exactly", () => {
   it("proportional-by-quantity shares sum exactly to the bundle price despite rounding", async () => {
-    const { product, currency, channel, customer } = await seedSalesReferenceData();
+    const { product, currency, channel, customer, user } = await seedSalesReferenceData();
     const bundleGroupId = randomUUID();
 
     const order = await createDraftOrder({
@@ -19,6 +19,8 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [
         { productId: product.id, quantity: 1 },
         { productId: product.id, quantity: 1 },
@@ -58,7 +60,7 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
   });
 
   it("rejects an explicit override whose shares don't sum to the bundle price", async () => {
-    const { product, currency, channel, customer } = await seedSalesReferenceData();
+    const { product, currency, channel, customer, user } = await seedSalesReferenceData();
     const bundleGroupId = randomUUID();
 
     const order = await createDraftOrder({
@@ -66,6 +68,8 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [
         { productId: product.id, quantity: 2 },
         { productId: product.id, quantity: 3 },

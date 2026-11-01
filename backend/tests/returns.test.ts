@@ -30,6 +30,8 @@ async function dispatchFreshLine(params: {
     channelId: params.channelId,
     customerId: params.customerId,
     currencyId: params.currencyId,
+    actorUserId: params.userId,
+    actorHasPriceOverride: false,
     lines: [{ productId: params.productId, quantity: params.quantity, gradeRequirementType: "none", unitPrice: 900 }],
   });
   const line = order.lines[0]!;
@@ -187,6 +189,8 @@ describe("acceptance test #11: origin-uncertain return from a multi-lot order", 
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 10, gradeRequirementType: "none", unitPrice: 900 }],
     });
     const line = order.lines[0]!;

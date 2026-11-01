@@ -88,11 +88,16 @@ describe("finance ledger: every posting is balanced and account balances reflect
     });
     const category = await prisma.category.create({ data: { name: `Cat-${randomUUID()}` } });
     const product = await prisma.product.create({ data: { skuCode: `SKU-${randomUUID()}`, name: "P", categoryId: category.id } });
+    const ledgerTestUser = await prisma.user.create({
+      data: { name: "Ledger Test User", email: `ledger-${randomUUID()}@example.com`, passwordHash: "x" },
+    });
     const order = await createDraftOrder({
       orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: pkr.id,
+      actorUserId: ledgerTestUser.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 1, unitPrice: 1000 }],
     });
 
@@ -134,6 +139,8 @@ describe("finance ledger: every posting is balanced and account balances reflect
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 50, gradeRequirementType: "none", unitPrice: 900 }],
     });
     const line = order.lines[0]!;

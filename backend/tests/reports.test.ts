@@ -32,12 +32,14 @@ describe("reports: stock summary and inventory valuation reconcile with the ledg
   });
 
   it("an unfulfilled order shows up until it's fully delivered", async () => {
-    const { channel, customer, currency, product } = await seedSalesReferenceData();
+    const { channel, customer, currency, product, user } = await seedSalesReferenceData();
     const order = await createDraftOrder({
       orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 1, unitPrice: 100 }],
     });
 
@@ -57,6 +59,8 @@ describe("reports: stock summary and inventory valuation reconcile with the ledg
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 50, gradeRequirementType: "none", unitPrice: 900 }],
     });
     const line = order.lines[0]!;

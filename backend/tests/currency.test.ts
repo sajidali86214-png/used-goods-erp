@@ -12,7 +12,7 @@ afterAll(async () => {
 
 describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR conversion", () => {
   it("preserves the locked receipt rate and keeps the actual conversion rate separate; Fleek commission stays zero", async () => {
-    const { customer } = await seedSalesReferenceData();
+    const { customer, user } = await seedSalesReferenceData();
 
     const gbp = await prisma.currency.upsert({
       where: { code: "GBP" },
@@ -49,6 +49,8 @@ describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR con
       channelId: fleek.id,
       customerId: customer.id,
       currencyId: gbp.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
       lines: [{ productId: product.id, quantity: 10, unitPrice: 20 }],
     });
     const orderTotalGbp = 200; // 10 * 20
