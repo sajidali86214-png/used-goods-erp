@@ -41,20 +41,33 @@ Test files map to spec acceptance tests (`docs/01-implementation-plan.md` has th
 - `tests/import.test.ts` — #17 (invalid/duplicate rows never produce a silent partial document; re-importing an existing SKU is rejected, not overwritten).
 - `tests/stock-count.test.ts` — #18 (a counted variance is never posted until approved; approval posts one adjustment and never edits prior movement history).
 - `tests/bundle.test.ts` — #19 (bundle total price and shared discount/shipping allocate across lines with an exact deterministic-remainder reconciliation).
-- `tests/backup.test.ts` — #20, database half only (see below); **skips itself** unless `TEST_POSTGRES_SUPERUSER_URL` and `BACKUP_ENCRYPTION_KEY_HEX` are set in `.env`.
+- `tests/backup.test.ts` — #20, database half; **skips itself** unless `TEST_POSTGRES_SUPERUSER_URL` and `BACKUP_ENCRYPTION_KEY_HEX` are set in `.env`.
+- `tests/drive-backup.test.ts` — the Google Drive nightly-copy half of #20, against the real Drive API (not mocked); **skips itself** unless the `GOOGLE_OAUTH_*` / `GOOGLE_DRIVE_*` vars are set (see `.env.example` and `scripts/driveOAuthSetup.ts`).
+- `tests/ledger.test.ts` — finance ledger postings (expenses, supplier advances, customer receipts, paid refunds, sale revenue/COGS at dispatch, transfers, owner transactions) are all balanced and update account balances correctly; cross-checked against the same 45000/28000/17000 worked example used elsewhere.
+- `tests/reports.test.ts` — operational/financial dashboard aggregations reconcile with the ledger and with known fixtures.
+- `tests/price-override.test.ts` — a line priced below a product's `minPrice` is gated by the `price.override` permission and audited.
 
-39 tests passing against a real local PostgreSQL 17 instance (not mocked) as of this writing; `npm run build` and `npm test` both pass.
+51 tests passing against a real local PostgreSQL 17 instance (not mocked) as of this writing; `npm run build` and `npm test` both pass.
 
 ## Known limitations — be honest about what's not here yet
 
 Not implemented at all:
 - Screenshot-assisted order drafts (Stage 3, spec section 10 / acceptance test #14) — deliberately not started: it needs a real OCR/extraction service, which spec section 21 says must not be assumed free or already connected. Needs an owner decision + budget first (see `docs/05-decisions-needed.md`).
-- Google Drive upload for backups — `backend/src/modules/backup/backupService.ts` does the real, tested work (pg_dump → AES-256-GCM encrypt → checksum → isolated restore-test into a fresh database, row-counts verified), but the nightly-copy-to-Drive step needs a real owner-provisioned service account, so it isn't built. Media/attachment backup is untouched for the same reason (no object storage provisioned yet).
-- Finance ledger posting logic, reconciliation, and period locks — tables exist (`Account`/`LedgerEntry`/`Expense`/`Transfer`/`OwnerTransaction`/`PeriodLock`) but nothing posts to them yet; spec section 11 explicitly wants accountant sign-off on posting triggers before this is built.
-- Dashboards/reports.
+- Media/attachment backup — the database backup+Drive-upload pipeline is real and tested end to end (see below); media (product/lot/order photos) has no backup yet because no object storage is provisioned.
+- Period lock enforcement — `PeriodLock` table exists; nothing yet blocks a posting into a locked period.
 - Opening-data import (section 17's go-live flow) — the generic bulk-import validation engine (`src/modules/imports`) exists and is tested for products; it isn't yet wired up for suppliers/customers/opening-stock.
+- Admin-web and mobile are still unimplemented skeletons (see their own READMEs) — this backend has no UI consuming it yet beyond the test suite and manual HTTP calls.
 
 Partial/hardening gaps:
 - No DB-level CHECK constraints yet (quantity/cost non-negativity is enforced in the service layer only, inside SERIALIZABLE transactions — see `docs/02-data-model.md` section 9).
-- Audit log exists and is used for grade-requirement amendments, but isn't yet wired into every sensitive mutation.
+- Audit log exists and is used for grade-requirement amendments and price overrides, but isn't yet wired into every sensitive mutation (e.g. refund approval, backdating, user management).
 - The Idempotency-Key middleware applies to all POST/PUT/PATCH routes, but only one HTTP-level test exercises it (`/sales/orders`) — the same middleware is unverified-but-presumed-correct on other routes since the logic isn't route-specific.
+- Finance ledger posting (`src/modules/finance/ledgerService.ts`) is a DEFAULT policy, not a final accounting decision — see the module's own docstring. It recognizes revenue/COGS at dispatch and only supports PKR-denominated postings (a foreign-currency posting throws rather than guessing an FX treatment). Spec section 11 explicitly wants accountant sign-off on posting triggers, revenue recognition timing, and FX/exchange-difference treatment before this runs in production.
+
+## Backup (spec section 16)
+
+Both the database and Google Drive halves are real, tested, working code, not mocks:
+- `src/modules/backup/backupService.ts` — `pg_dump` → SHA-256 checksum → AES-256-GCM encrypt → manifest; `restoreAndVerify` decrypts, re-checks the checksum, and restores into a throwaway database to verify row counts, reporting measured duration.
+- `src/modules/backup/driveUploadService.ts` — uploads the encrypted backup + manifest to a Drive folder, authenticated as the **owner's own Google account via OAuth** (a bare service account has zero storage quota on a personal/non-Workspace Drive — this was discovered by actually hitting that error, not assumed). One-time setup: create an OAuth client (Desktop app type) in Google Cloud Console, put its ID/secret in `.env`, then run `npx tsx scripts/driveOAuthSetup.ts` and approve access once in a browser.
+
+Not yet built: an actual scheduled/cron job that runs this nightly, and alerting on a missed/failed run (spec section 16's monitoring requirements). The pieces exist and work when called; nothing calls them on a schedule yet.
