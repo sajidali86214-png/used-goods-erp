@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
 import { prisma } from "../../lib/prisma.js";
 import { Decimal } from "../../lib/money.js";
+import { generateSkuCode } from "./skuGenerator.js";
 
 /**
  * CRUD for owner-configurable master/reference data (spec section 5).
@@ -29,6 +30,26 @@ export async function masterDataRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const body = z.object({ name: z.string().min(1).optional(), archivedAt: z.coerce.date().nullable().optional() }).parse(request.body);
       return prisma.category.update({ where: { id }, data: body });
+    },
+  );
+
+  // ---- Brands ----
+  app.get("/settings/brands", async () => prisma.brand.findMany({ orderBy: { name: "asc" } }));
+  app.post(
+    "/settings/brands",
+    { preHandler: requirePermission("settings.manage") },
+    async (request, reply) => {
+      const body = z.object({ name: z.string().min(1) }).parse(request.body);
+      return reply.code(201).send(await prisma.brand.create({ data: body }));
+    },
+  );
+  app.patch(
+    "/settings/brands/:id",
+    { preHandler: requirePermission("settings.manage") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      const body = z.object({ name: z.string().min(1).optional(), archivedAt: z.coerce.date().nullable().optional() }).parse(request.body);
+      return prisma.brand.update({ where: { id }, data: body });
     },
   );
 
@@ -143,14 +164,14 @@ export async function masterDataRoutes(app: FastifyInstance) {
     const { search } = request.query as { search?: string };
     return prisma.product.findMany({
       where: search ? { OR: [{ skuCode: { contains: search, mode: "insensitive" } }, { name: { contains: search, mode: "insensitive" } }] } : undefined,
-      include: { category: true },
+      include: { category: true, brand: true },
       orderBy: { skuCode: "asc" },
       take: 200,
     });
   });
   app.get("/products/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const product = await prisma.product.findUnique({ where: { id }, include: { category: true } });
+    const product = await prisma.product.findUnique({ where: { id }, include: { category: true, brand: true } });
     if (!product) return reply.code(404).send({ error: "not_found" });
     return product;
   });
@@ -160,22 +181,24 @@ export async function masterDataRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = z
         .object({
-          skuCode: z.string().min(1),
           name: z.string().min(1),
           categoryId: z.string().uuid(),
+          brandId: z.string().uuid().optional(),
           unitOfMeasure: z.string().optional(),
           description: z.string().optional(),
-          brand: z.string().optional(),
           defaultSellPrice: z.number().optional(),
           minPrice: z.number().optional(),
         })
         .parse(request.body);
+      const skuCode = await generateSkuCode(body.categoryId);
       const product = await prisma.product.create({
         data: {
           ...body,
+          skuCode,
           defaultSellPrice: body.defaultSellPrice !== undefined ? new Decimal(body.defaultSellPrice) : undefined,
           minPrice: body.minPrice !== undefined ? new Decimal(body.minPrice) : undefined,
         },
+        include: { category: true, brand: true },
       });
       return reply.code(201).send(product);
     },
@@ -188,6 +211,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
       const body = z
         .object({
           name: z.string().optional(),
+          brandId: z.string().uuid().nullable().optional(),
           description: z.string().optional(),
           defaultSellPrice: z.number().optional(),
           minPrice: z.number().optional(),

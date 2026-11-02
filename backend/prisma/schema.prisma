@@ -124,11 +124,18 @@ model Approval {
 
 model Category {
   id         String     @id @default(uuid())
-  name       String
+  name       String     @unique
   parentId   String?
   archivedAt DateTime?
   parent     Category?  @relation("CategoryParent", fields: [parentId], references: [id])
   children   Category[] @relation("CategoryParent")
+  products   Product[]
+}
+
+model Brand {
+  id         String    @id @default(uuid())
+  name       String    @unique
+  archivedAt DateTime?
   products   Product[]
 }
 
@@ -137,9 +144,9 @@ model Product {
   skuCode          String    @unique
   name             String
   categoryId       String
+  brandId          String?
   description      String?
   unitOfMeasure    String    @default("piece")
-  brand            String?
   sizeGroup        String?
   material         String?
   defaultSellPrice Decimal?  @db.Decimal(18, 4)
@@ -150,6 +157,7 @@ model Product {
   updatedAt        DateTime  @updatedAt
 
   category        Category            @relation(fields: [categoryId], references: [id])
+  brand           Brand?              @relation(fields: [brandId], references: [id])
   photos          ProductPhoto[]
   grnLines        GRNLine[]
   lots            Lot[]

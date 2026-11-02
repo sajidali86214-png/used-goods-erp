@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 
-type Tab = "categories" | "grades" | "bins" | "channels" | "accounts" | "periods";
+type Tab = "categories" | "brands" | "grades" | "bins" | "channels" | "accounts" | "periods";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("categories");
@@ -11,13 +11,14 @@ export function SettingsPage() {
     <div>
       <h1>Settings</h1>
       <div className="tabs">
-        {(["categories", "grades", "bins", "channels", "accounts", "periods"] as Tab[]).map((t) => (
+        {(["categories", "brands", "grades", "bins", "channels", "accounts", "periods"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
             {t}
           </button>
         ))}
       </div>
       {tab === "categories" && <SimpleList path="/settings/categories" fields={[{ key: "name", label: "Name" }]} />}
+      {tab === "brands" && <SimpleList path="/settings/brands" fields={[{ key: "name", label: "Name" }]} />}
       {tab === "grades" && <SimpleList path="/settings/grades" fields={[{ key: "code", label: "Code" }, { key: "label", label: "Label" }]} />}
       {tab === "bins" && <SimpleList path="/settings/bins" fields={[{ key: "code", label: "Code" }, { key: "label", label: "Label" }]} />}
       {tab === "channels" && <SimpleList path="/settings/channels" fields={[{ key: "code", label: "Code" }, { key: "label", label: "Label" }]} />}

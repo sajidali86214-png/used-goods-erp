@@ -52,6 +52,24 @@ async function main() {
     create: { code: "MAIN", label: "Main warehouse" },
   });
 
+  // Starter categories for a used clothing & bags business — the owner can
+  // add more via Settings > Categories.
+  for (const name of [
+    "Bags",
+    "Dresses",
+    "Sweaters",
+    "Jeans",
+    "Jackets",
+    "Shirts",
+    "T-Shirts",
+    "Skirts",
+    "Trousers",
+    "Shoes",
+    "Accessories",
+  ]) {
+    await prisma.category.upsert({ where: { name }, update: {}, create: { name } });
+  }
+
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
 
   // Standard control (non-cash) ledger accounts, all PKR-denominated per
