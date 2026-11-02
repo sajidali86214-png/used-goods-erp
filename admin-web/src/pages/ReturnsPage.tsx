@@ -31,12 +31,33 @@ interface OrderDetailLine {
   product: { skuCode: string };
   pickAllocations: { id: string; costLayerId: string; gradeId: string; binId: string; pickedQty: string }[];
 }
+interface Refund {
+  id: string;
+  amount: string;
+  currencyId: string;
+  status: string;
+  returnRequestId: string | null;
+}
+interface OrderDetail {
+  lines: OrderDetailLine[];
+  refunds: Refund[];
+}
+interface Currency {
+  id: string;
+  code: string;
+}
+interface Account {
+  id: string;
+  label: string;
+}
 
 export function ReturnsPage() {
   const { has } = useAuth();
   const returns = useFetch<ReturnRequest[]>("/sales/returns");
   const orders = useFetch<SalesOrderSummary[]>("/sales/orders");
   const grades = useFetch<Grade[]>("/settings/grades");
+  const currencies = useFetch<Currency[]>("/settings/currencies");
+  const accounts = useFetch<Account[]>("/settings/accounts");
 
   const [error, setError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState("");
@@ -44,7 +65,7 @@ export function ReturnsPage() {
 
   const [selectedReturnId, setSelectedReturnId] = useState<string | null>(null);
   const selectedReturn = returns.data?.find((r) => r.id === selectedReturnId);
-  const orderDetail = useFetch<{ lines: OrderDetailLine[] }>(
+  const orderDetail = useFetch<OrderDetail>(
     selectedReturn ? `/sales/orders/${selectedReturn.order.id}` : null,
     [selectedReturn?.order.id],
   );
@@ -124,14 +145,27 @@ export function ReturnsPage() {
         )}
       </div>
 
-      {selectedReturnId && (
-        <ReceiveAndInspect
-          returnRequestId={selectedReturnId}
-          orderLines={orderDetail.data?.lines ?? []}
-          grades={grades.data ?? []}
-          existingLines={returns.data?.find((r) => r.id === selectedReturnId)?.lines ?? []}
-          onChanged={returns.reload}
-        />
+      {selectedReturn && (
+        <>
+          <ReceiveAndInspect
+            returnRequestId={selectedReturn.id}
+            orderLines={orderDetail.data?.lines ?? []}
+            grades={grades.data ?? []}
+            existingLines={selectedReturn.lines}
+            onChanged={() => {
+              returns.reload();
+              orderDetail.reload();
+            }}
+          />
+          <RefundPanel
+            orderId={selectedReturn.order.id}
+            returnRequestId={selectedReturn.id}
+            refunds={orderDetail.data?.refunds ?? []}
+            currencies={currencies.data ?? []}
+            accounts={accounts.data ?? []}
+            onChanged={orderDetail.reload}
+          />
+        </>
       )}
     </div>
   );
@@ -184,11 +218,11 @@ function ReceiveAndInspect({
     }
   }
 
-  async function handleInspect(lineId: string, inspectedGradeId: string, qty: number, disposition: string) {
+  async function handleInspect(lineId: string, outcomes: { gradeId: string; quantity: number; disposition: string }[]) {
     setError(null);
     try {
       await api.post(`/sales/returns/lines/${lineId}/inspect`, {
-        outcomes: [{ inspectedGradeId, quantity: qty, disposition }],
+        outcomes: outcomes.map((o) => ({ inspectedGradeId: o.gradeId, quantity: o.quantity, disposition: o.disposition })),
       });
       onChanged();
     } catch (err) {
@@ -270,7 +304,7 @@ function ReceiveAndInspect({
                 <th>Qty</th>
                 <th>Origin grade</th>
                 <th>Status</th>
-                <th>Inspect as...</th>
+                <th>Inspect</th>
               </tr>
             </thead>
             <tbody>
@@ -282,8 +316,9 @@ function ReceiveAndInspect({
                   <td>
                     {!line.disposition && (
                       <InspectForm
+                        totalQuantity={Number(line.quantity)}
                         grades={grades}
-                        onSubmit={(gradeId, disposition) => handleInspect(line.id, gradeId, Number(line.quantity), disposition)}
+                        onSubmit={(outcomes) => handleInspect(line.id, outcomes)}
                       />
                     )}
                   </td>
@@ -297,26 +332,210 @@ function ReceiveAndInspect({
   );
 }
 
-function InspectForm({ grades, onSubmit }: { grades: Grade[]; onSubmit: (gradeId: string, disposition: string) => void }) {
-  const [gradeId, setGradeId] = useState("");
-  const [disposition, setDisposition] = useState("resaleable");
+interface OutcomeRow {
+  gradeId: string;
+  quantity: string;
+  disposition: string;
+}
+
+/**
+ * Supports splitting one returned quantity across multiple outcomes — e.g.
+ * spec's worked example: 5 Grade A pieces return, 3 stay A and 2 become B.
+ * The sum of outcome quantities must equal the line's full quantity before
+ * submitting is allowed (the backend enforces this too; this just surfaces
+ * the mismatch before the round trip).
+ */
+function InspectForm({
+  totalQuantity,
+  grades,
+  onSubmit,
+}: {
+  totalQuantity: number;
+  grades: Grade[];
+  onSubmit: (outcomes: { gradeId: string; quantity: number; disposition: string }[]) => void;
+}) {
+  const [rows, setRows] = useState<OutcomeRow[]>([{ gradeId: "", quantity: String(totalQuantity), disposition: "resaleable" }]);
+
+  const sum = rows.reduce((acc, r) => acc + (Number(r.quantity) || 0), 0);
+  const balanced = sum === totalQuantity;
+  const allGraded = rows.every((r) => r.gradeId);
+
+  function updateRow(i: number, patch: Partial<OutcomeRow>) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  }
+
+  function addRow() {
+    const remaining = Math.max(0, totalQuantity - sum);
+    setRows((prev) => [...prev, { gradeId: "", quantity: String(remaining), disposition: "resaleable" }]);
+  }
+
+  function removeRow(i: number) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div>
+      {rows.map((row, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+          <select value={row.gradeId} onChange={(e) => updateRow(i, { gradeId: e.target.value })} style={{ width: 90 }}>
+            <option value="">Grade...</option>
+            {grades.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.code}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            value={row.quantity}
+            onChange={(e) => updateRow(i, { quantity: e.target.value })}
+            style={{ width: 60 }}
+            min={1}
+          />
+          <select value={row.disposition} onChange={(e) => updateRow(i, { disposition: e.target.value })} style={{ width: 100 }}>
+            <option value="resaleable">resaleable</option>
+            <option value="repair">repair</option>
+            <option value="damaged">damaged</option>
+          </select>
+          {rows.length > 1 && (
+            <button type="button" className="secondary" onClick={() => removeRow(i)}>
+              ×
+            </button>
+          )}
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <button type="button" className="secondary" onClick={addRow}>
+          + Split into another grade
+        </button>
+        <span style={{ fontSize: 12, color: balanced ? "var(--success)" : "var(--danger)" }}>
+          {sum} / {totalQuantity}
+        </span>
+      </div>
+      <button
+        type="button"
+        disabled={!balanced || !allGraded}
+        style={{ marginTop: 6 }}
+        onClick={() => onSubmit(rows.map((r) => ({ gradeId: r.gradeId, quantity: Number(r.quantity), disposition: r.disposition })))}
+      >
+        Confirm inspection
+      </button>
+    </div>
+  );
+}
+
+function RefundPanel({
+  orderId,
+  returnRequestId,
+  refunds,
+  currencies,
+  accounts,
+  onChanged,
+}: {
+  orderId: string;
+  returnRequestId: string;
+  refunds: Refund[];
+  currencies: Currency[];
+  accounts: Account[];
+  onChanged: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [currencyId, setCurrencyId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.post("/sales/refunds", { orderId, returnRequestId, amount: Number(amount), currencyId });
+      setAmount("");
+      setSuccess("Refund recorded as pending.");
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not create refund");
+    }
+  }
+
+  async function handleMarkPaid(refundId: string, accountId: string) {
+    setError(null);
+    try {
+      await api.post(`/sales/refunds/${refundId}/mark-paid`, { paymentMethodAccountId: accountId });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not mark refund paid");
+    }
+  }
+
+  const relevantRefunds = refunds.filter((r) => r.returnRequestId === returnRequestId);
+
+  return (
+    <div className="panel">
+      <h3>Refund</h3>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <form onSubmit={handleCreate} className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field">
+          <label>Amount</label>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} />
+        </div>
+        <div className="field">
+          <label>Currency</label>
+          <select value={currencyId} onChange={(e) => setCurrencyId(e.target.value)} required>
+            <option value="">Select...</option>
+            {currencies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.code}
+              </option>
+            ))}
+          </select>
+        </div>
+        <button type="submit" style={{ height: 36 }}>
+          Record refund
+        </button>
+      </form>
+
+      {relevantRefunds.length > 0 && (
+        <table style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Amount</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {relevantRefunds.map((r) => (
+              <tr key={r.id}>
+                <td>{r.amount}</td>
+                <td>
+                  <span className="badge">{r.status}</span>
+                </td>
+                <td>{r.status !== "refunded" && <MarkPaidControl accounts={accounts} onConfirm={(accountId) => handleMarkPaid(r.id, accountId)} />}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function MarkPaidControl({ accounts, onConfirm }: { accounts: Account[]; onConfirm: (accountId: string) => void }) {
+  const [accountId, setAccountId] = useState("");
   return (
     <div style={{ display: "flex", gap: 6 }}>
-      <select value={gradeId} onChange={(e) => setGradeId(e.target.value)} style={{ width: 90 }}>
-        <option value="">Grade...</option>
-        {grades.map((g) => (
-          <option key={g.id} value={g.id}>
-            {g.code}
+      <select value={accountId} onChange={(e) => setAccountId(e.target.value)} style={{ width: 140 }}>
+        <option value="">Paid from...</option>
+        {accounts.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.label}
           </option>
         ))}
       </select>
-      <select value={disposition} onChange={(e) => setDisposition(e.target.value)} style={{ width: 110 }}>
-        <option value="resaleable">resaleable</option>
-        <option value="repair">repair</option>
-        <option value="damaged">damaged</option>
-      </select>
-      <button className="secondary" disabled={!gradeId} onClick={() => onSubmit(gradeId, disposition)}>
-        Confirm
+      <button className="secondary" disabled={!accountId} onClick={() => onConfirm(accountId)}>
+        Mark paid
       </button>
     </div>
   );
