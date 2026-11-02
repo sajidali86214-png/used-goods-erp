@@ -11,6 +11,7 @@ const NAV_ITEMS: { to: string; label: string; permission?: string }[] = [
   { to: "/finance", label: "Finance", permission: "finance.payment" },
   { to: "/reports", label: "Reports", permission: "profit.view" },
   { to: "/imports", label: "Bulk Import", permission: "settings.manage" },
+  { to: "/users", label: "Users", permission: "user.manage" },
   { to: "/audit", label: "Audit Log", permission: "audit.view" },
   { to: "/settings", label: "Settings", permission: "settings.manage" },
 ];

@@ -78,10 +78,10 @@ export function SalesOrderDetailPage() {
       const remaining = Number(line.quantity) - alreadyPicked(line);
       if (remaining <= 0) return;
 
+      // Only reachable for gradeRequirementType "none" — the Fulfil button below is gated to that case.
       const { candidates } = await api.post<{ candidates: AllocationCandidate[] }>("/sales/allocations/suggest", {
         productId: line.productId,
         quantity: remaining,
-        allowedGradeIds: line.gradeRequirementType === "allowed_set" ? undefined : undefined,
       });
 
       for (const c of candidates) {

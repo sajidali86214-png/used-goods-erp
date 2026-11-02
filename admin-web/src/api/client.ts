@@ -21,7 +21,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // Only set Content-Type when there's actually a body — Fastify's JSON
+  // parser rejects a declared application/json body that's empty (found by
+  // actually calling a bodyless POST route like .../approve against the
+  // real backend, not assumed).
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
 
