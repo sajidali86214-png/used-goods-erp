@@ -1,5 +1,6 @@
-import "./config/env.js";
+import { env } from "./config/env.js";
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { authPlugin } from "./middleware/auth.js";
 import { idempotencyPlugin } from "./middleware/idempotency.js";
 import { authRoutes } from "./modules/auth/authRoutes.js";
@@ -15,6 +16,12 @@ import { auditRoutes } from "./modules/audit/auditRoutes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
+
+  await app.register(cors, {
+    origin: env.CORS_ORIGINS.split(",").map((o) => o.trim()),
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
+  });
 
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
