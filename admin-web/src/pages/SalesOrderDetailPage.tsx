@@ -4,6 +4,12 @@ import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 
+interface Grade {
+  id: string;
+  code: string;
+  label: string;
+}
+
 interface Reservation {
   id: string;
   costLayerId: string;
@@ -25,6 +31,8 @@ interface OrderLine {
   product: { skuCode: string; name: string };
   quantity: string;
   gradeRequirementType: string;
+  allowedGradeIds: string[];
+  exactGradeQuantities: Record<string, number> | null;
   reservations: Reservation[];
   pickAllocations: PickAllocation[];
 }
@@ -60,6 +68,7 @@ export function SalesOrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { has } = useAuth();
   const order = useFetch<OrderDetail>(`/sales/orders/${id}`);
+  const grades = useFetch<Grade[]>("/settings/grades");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -69,6 +78,56 @@ export function SalesOrderDetailPage() {
 
   function alreadyPicked(line: OrderLine): number {
     return line.pickAllocations.reduce((sum, p) => sum + Number(p.pickedQty), 0);
+  }
+
+  function pickedForGrade(line: OrderLine, gradeId: string): number {
+    return line.pickAllocations.filter((p) => p.gradeId === gradeId).reduce((sum, p) => sum + Number(p.pickedQty), 0);
+  }
+
+  async function handlePickGrade(line: OrderLine, gradeId: string, qty: number) {
+    setError(null);
+    setBusy(`${line.id}-${gradeId}`);
+    try {
+      const { candidates } = await api.post<{ candidates: AllocationCandidate[] }>("/sales/allocations/suggest", {
+        productId: line.productId,
+        quantity: qty,
+        allowedGradeIds: [gradeId],
+      });
+      if (candidates.length === 0) {
+        throw new ApiError(409, { error: `No saleable stock available in that grade` });
+      }
+      for (const c of candidates) {
+        await api.post("/sales/reservations", {
+          orderLineId: line.id,
+          costLayerId: c.costLayerId,
+          gradeId: c.gradeId,
+          binId: c.binId,
+          quantity: Number(c.quantity),
+        });
+        await api.post("/sales/picks", {
+          orderLineId: line.id,
+          costLayerId: c.costLayerId,
+          gradeId: c.gradeId,
+          binId: c.binId,
+          quantity: Number(c.quantity),
+        });
+      }
+      order.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not pick that grade");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleAmend(line: OrderLine, addAllowedGradeId: string, reason: string) {
+    setError(null);
+    try {
+      await api.post(`/sales/order-lines/${line.id}/amend-grade`, { addAllowedGradeId, reason });
+      order.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not amend grade requirement");
+    }
   }
 
   async function handleFulfillLine(line: OrderLine) {
@@ -150,10 +209,32 @@ export function SalesOrderDetailPage() {
                 {busy === line.id ? "Working..." : `Fulfil ${remaining} (FIFO reserve + pick)`}
               </button>
             )}
-            {line.gradeRequirementType !== "none" && remaining > 0 && (
-              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
-                Restricted/exact-composition lines need the allowed grade(s) chosen per pick — use the API directly for now (POST /sales/reservations and /sales/picks with a specific gradeId).
-              </p>
+
+            {line.gradeRequirementType === "allowed_set" && (
+              <RestrictedGradePicker
+                allowedGradeIds={line.allowedGradeIds}
+                grades={grades.data ?? []}
+                pickedForGrade={(gradeId) => pickedForGrade(line, gradeId)}
+                lineRemaining={remaining}
+                busyKey={busy}
+                lineId={line.id}
+                canPick={has("order.pick")}
+                canAmend={has("order.grade_amend")}
+                onPick={(gradeId, qty) => handlePickGrade(line, gradeId, qty)}
+                onAmend={(gradeId, reason) => handleAmend(line, gradeId, reason)}
+              />
+            )}
+
+            {line.gradeRequirementType === "exact_composition" && line.exactGradeQuantities && (
+              <ExactCompositionPicker
+                required={line.exactGradeQuantities}
+                grades={grades.data ?? []}
+                pickedForGrade={(gradeId) => pickedForGrade(line, gradeId)}
+                busyKey={busy}
+                lineId={line.id}
+                canPick={has("order.pick")}
+                onPick={(gradeId, qty) => handlePickGrade(line, gradeId, qty)}
+              />
             )}
 
             {line.pickAllocations.length > 0 && (
@@ -190,6 +271,152 @@ export function SalesOrderDetailPage() {
                   })}
                 </tbody>
               </table>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RestrictedGradePicker({
+  allowedGradeIds,
+  grades,
+  pickedForGrade,
+  lineRemaining,
+  busyKey,
+  lineId,
+  canPick,
+  canAmend,
+  onPick,
+  onAmend,
+}: {
+  allowedGradeIds: string[];
+  grades: Grade[];
+  pickedForGrade: (gradeId: string) => number;
+  lineRemaining: number;
+  busyKey: string | null;
+  lineId: string;
+  canPick: boolean;
+  canAmend: boolean;
+  onPick: (gradeId: string, qty: number) => void;
+  onAmend: (gradeId: string, reason: string) => void;
+}) {
+  const [qtyByGrade, setQtyByGrade] = useState<Record<string, string>>({});
+  const [showAmend, setShowAmend] = useState(false);
+  const [amendGradeId, setAmendGradeId] = useState("");
+  const [amendReason, setAmendReason] = useState("");
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Allowed grades only — pick each grade separately:</p>
+      {allowedGradeIds.map((gradeId) => {
+        const grade = grades.find((g) => g.id === gradeId);
+        const picked = pickedForGrade(gradeId);
+        const key = `${lineId}-${gradeId}`;
+        return (
+          <div key={gradeId} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <span className="badge">{grade?.code ?? gradeId.slice(0, 8)}</span>
+            <span style={{ fontSize: 12 }}>picked {picked}</span>
+            {canPick && lineRemaining > 0 && (
+              <>
+                <input
+                  type="number"
+                  style={{ width: 70 }}
+                  min={1}
+                  max={lineRemaining}
+                  value={qtyByGrade[gradeId] ?? ""}
+                  onChange={(e) => setQtyByGrade((v) => ({ ...v, [gradeId]: e.target.value }))}
+                  placeholder="qty"
+                />
+                <button
+                  className="secondary"
+                  disabled={busyKey === key || !qtyByGrade[gradeId]}
+                  onClick={() => onPick(gradeId, Number(qtyByGrade[gradeId]))}
+                >
+                  {busyKey === key ? "..." : "Pick"}
+                </button>
+              </>
+            )}
+          </div>
+        );
+      })}
+
+      {canAmend && (
+        <div style={{ marginTop: 6 }}>
+          <button className="secondary" onClick={() => setShowAmend((v) => !v)}>
+            {showAmend ? "Cancel" : "+ Allow another grade (amend)"}
+          </button>
+          {showAmend && (
+            <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+              <select value={amendGradeId} onChange={(e) => setAmendGradeId(e.target.value)} style={{ width: 100 }}>
+                <option value="">Grade...</option>
+                {grades.filter((g) => !allowedGradeIds.includes(g.id)).map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {g.code}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={amendReason}
+                onChange={(e) => setAmendReason(e.target.value)}
+                placeholder="Reason (audited)"
+                style={{ width: 220 }}
+              />
+              <button
+                disabled={!amendGradeId || !amendReason}
+                onClick={() => {
+                  onAmend(amendGradeId, amendReason);
+                  setShowAmend(false);
+                  setAmendGradeId("");
+                  setAmendReason("");
+                }}
+              >
+                Confirm amendment
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExactCompositionPicker({
+  required,
+  grades,
+  pickedForGrade,
+  busyKey,
+  lineId,
+  canPick,
+  onPick,
+}: {
+  required: Record<string, number>;
+  grades: Grade[];
+  pickedForGrade: (gradeId: string) => number;
+  busyKey: string | null;
+  lineId: string;
+  canPick: boolean;
+  onPick: (gradeId: string, qty: number) => void;
+}) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Exact composition required:</p>
+      {Object.entries(required).map(([gradeId, requiredQty]) => {
+        const grade = grades.find((g) => g.id === gradeId);
+        const picked = pickedForGrade(gradeId);
+        const remaining = requiredQty - picked;
+        const key = `${lineId}-${gradeId}`;
+        return (
+          <div key={gradeId} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <span className="badge">{grade?.code ?? gradeId.slice(0, 8)}</span>
+            <span style={{ fontSize: 12 }}>
+              required {requiredQty} · picked {picked} · remaining {remaining}
+            </span>
+            {canPick && remaining > 0 && (
+              <button className="secondary" disabled={busyKey === key} onClick={() => onPick(gradeId, remaining)}>
+                {busyKey === key ? "..." : `Pick ${remaining}`}
+              </button>
             )}
           </div>
         );

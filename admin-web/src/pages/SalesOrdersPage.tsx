@@ -22,6 +22,10 @@ interface Product {
   skuCode: string;
   name: string;
 }
+interface Grade {
+  id: string;
+  code: string;
+}
 interface SalesOrder {
   id: string;
   orderNumber: string;
@@ -38,6 +42,7 @@ export function SalesOrdersPage() {
   const channels = useFetch<Channel[]>("/settings/channels");
   const currencies = useFetch<Currency[]>("/settings/currencies");
   const products = useFetch<Product[]>("/products");
+  const grades = useFetch<Grade[]>("/settings/grades");
 
   const [showForm, setShowForm] = useState(false);
   const [orderNumber, setOrderNumber] = useState("");
@@ -47,25 +52,49 @@ export function SalesOrdersPage() {
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
+  const [gradeRequirementType, setGradeRequirementType] = useState<"none" | "allowed_set" | "exact_composition">("none");
+  const [allowedGradeIds, setAllowedGradeIds] = useState<string[]>([]);
+  const [exactQtyByGrade, setExactQtyByGrade] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  function toggleAllowedGrade(id: string) {
+    setAllowedGradeIds((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
     try {
+      const exactGradeQuantities =
+        gradeRequirementType === "exact_composition"
+          ? Object.fromEntries(Object.entries(exactQtyByGrade).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)]))
+          : undefined;
+
       await api.post("/sales/orders", {
         orderNumber,
         customerId,
         channelId,
         currencyId,
-        lines: [{ productId, quantity: Number(quantity), unitPrice: unitPrice ? Number(unitPrice) : undefined, gradeRequirementType: "none" }],
+        lines: [
+          {
+            productId,
+            quantity: Number(quantity),
+            unitPrice: unitPrice ? Number(unitPrice) : undefined,
+            gradeRequirementType,
+            allowedGradeIds: gradeRequirementType === "allowed_set" ? allowedGradeIds : undefined,
+            exactGradeQuantities,
+          },
+        ],
       });
       setShowForm(false);
       setOrderNumber("");
       setQuantity("");
       setUnitPrice("");
+      setGradeRequirementType("none");
+      setAllowedGradeIds([]);
+      setExactQtyByGrade({});
       orders.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create order");
@@ -148,6 +177,50 @@ export function SalesOrdersPage() {
               <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} min={0} />
             </div>
           </div>
+
+          <div className="field">
+            <label>Grade requirement</label>
+            <select value={gradeRequirementType} onChange={(e) => setGradeRequirementType(e.target.value as typeof gradeRequirementType)}>
+              <option value="none">None — mixed grade, no ratio promised</option>
+              <option value="allowed_set">Allowed grades only</option>
+              <option value="exact_composition">Exact composition</option>
+            </select>
+          </div>
+
+          {gradeRequirementType === "allowed_set" && (
+            <div className="field">
+              <label>Which grades are allowed?</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {grades.data?.map((g) => (
+                  <label key={g.id} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 13 }}>
+                    <input type="checkbox" style={{ width: "auto" }} checked={allowedGradeIds.includes(g.id)} onChange={() => toggleAllowedGrade(g.id)} />
+                    {g.code}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {gradeRequirementType === "exact_composition" && (
+            <div className="field">
+              <label>Required quantity per grade (must sum to the line quantity)</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {grades.data?.map((g) => (
+                  <div key={g.id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <span style={{ fontSize: 12 }}>{g.code}</span>
+                    <input
+                      type="number"
+                      style={{ width: 60 }}
+                      min={0}
+                      value={exactQtyByGrade[g.id] ?? ""}
+                      onChange={(e) => setExactQtyByGrade((v) => ({ ...v, [g.id]: e.target.value }))}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <button type="submit" disabled={submitting}>
             {submitting ? "Creating..." : "Create order"}
           </button>
