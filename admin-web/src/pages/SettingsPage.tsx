@@ -177,8 +177,8 @@ function PeriodsTab() {
     setError(null);
     setSuccess(null);
     try {
-      await api.post("/finance/periods/lock", { periodStart, periodEnd });
-      setSuccess("Period locked.");
+      const lock = await api.post<{ id: string }>("/finance/periods/lock", { periodStart, periodEnd });
+      setSuccess(`Period locked. Lock ID (needed to reopen it later): ${lock.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not lock period");
     }
@@ -205,6 +205,46 @@ function PeriodsTab() {
           Lock period
         </button>
       </form>
+
+      <ReopenPeriodForm />
     </div>
+  );
+}
+
+function ReopenPeriodForm() {
+  const [periodLockId, setPeriodLockId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handleReopen(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    try {
+      await api.post(`/finance/periods/${periodLockId}/reopen`, { reason });
+      setSuccess("Period reopened.");
+      setReason("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not reopen period");
+    }
+  }
+
+  return (
+    <form onSubmit={handleReopen} className="form-row" style={{ alignItems: "flex-end", marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+      <div className="field">
+        <label>Period lock ID to reopen</label>
+        <input value={periodLockId} onChange={(e) => setPeriodLockId(e.target.value)} required placeholder="paste the lock's id" />
+      </div>
+      <div className="field">
+        <label>Reason (required, audited)</label>
+        <input value={reason} onChange={(e) => setReason(e.target.value)} required />
+      </div>
+      <button type="submit" className="secondary" style={{ height: 36 }}>
+        Reopen period
+      </button>
+      {error && <div className="error-banner" style={{ width: "100%" }}>{error}</div>}
+      {success && <div className="success-banner" style={{ width: "100%" }}>{success}</div>}
+    </form>
   );
 }
