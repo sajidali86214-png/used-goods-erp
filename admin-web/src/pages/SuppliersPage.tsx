@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
+import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 
 interface Supplier {
@@ -18,7 +19,9 @@ interface Currency {
 
 export function SuppliersPage() {
   const { has } = useAuth();
-  const suppliers = useFetch<Supplier[]>("/suppliers");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const suppliers = useFetch<Supplier[]>(`/suppliers${debouncedSearch ? `?search=${encodeURIComponent(debouncedSearch)}` : ""}`, [debouncedSearch]);
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
   const [showForm, setShowForm] = useState(false);
@@ -94,6 +97,10 @@ export function SuppliersPage() {
       )}
 
       <div className="panel">
+        <div className="field" style={{ maxWidth: 320 }}>
+          <label>Search by name</label>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
         {suppliers.loading && <p>Loading...</p>}
         {suppliers.error && <div className="error-banner">{suppliers.error}</div>}
         {suppliers.data && (

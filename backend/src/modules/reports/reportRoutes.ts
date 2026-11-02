@@ -8,6 +8,9 @@ import {
   getPendingReturns,
   getPendingRefunds,
   getFinancialSummary,
+  getStockAging,
+  getSupplierBalances,
+  getCustomerBalances,
 } from "./reportService.js";
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -27,6 +30,7 @@ export async function reportRoutes(app: FastifyInstance) {
   app.get("/reports/pending-refunds", { preHandler: requirePermission("refund.create") }, async () =>
     getPendingRefunds(),
   );
+  app.get("/reports/stock-aging", { preHandler: requirePermission("stock.count") }, async () => getStockAging());
 
   // Financial dashboard — cost/profit-gated, never visible to a picker.
   app.get(
@@ -44,5 +48,15 @@ export async function reportRoutes(app: FastifyInstance) {
         to: to ? new Date(to) : undefined,
       });
     },
+  );
+  app.get(
+    "/reports/supplier-balances",
+    { preHandler: requirePermission("supplier.payment_details.view") },
+    async () => getSupplierBalances(),
+  );
+  app.get(
+    "/reports/customer-balances",
+    { preHandler: requirePermission("profit.view") },
+    async () => getCustomerBalances(),
   );
 }

@@ -207,7 +207,14 @@ export async function masterDataRoutes(app: FastifyInstance) {
   );
 
   // ---- Suppliers ----
-  app.get("/suppliers", async () => prisma.supplier.findMany({ orderBy: { name: "asc" }, take: 200 }));
+  app.get("/suppliers", async (request) => {
+    const { search } = request.query as { search?: string };
+    return prisma.supplier.findMany({
+      where: search ? { name: { contains: search, mode: "insensitive" } } : undefined,
+      orderBy: { name: "asc" },
+      take: 200,
+    });
+  });
   app.get(
     "/suppliers/:id",
     { preHandler: requirePermission("supplier.payment_details.view") },
@@ -237,7 +244,14 @@ export async function masterDataRoutes(app: FastifyInstance) {
   );
 
   // ---- Customers ----
-  app.get("/customers", async () => prisma.customer.findMany({ orderBy: { name: "asc" }, take: 200 }));
+  app.get("/customers", async (request) => {
+    const { search } = request.query as { search?: string };
+    return prisma.customer.findMany({
+      where: search ? { name: { contains: search, mode: "insensitive" } } : undefined,
+      orderBy: { name: "asc" },
+      take: 200,
+    });
+  });
   app.post(
     "/customers",
     { preHandler: requirePermission("order.create") },

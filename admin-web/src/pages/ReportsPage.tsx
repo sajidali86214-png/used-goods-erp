@@ -22,6 +22,27 @@ interface FinancialSummary {
   supplierAdvancesOutstanding: string;
   unsoldInventoryValue: string;
 }
+interface StockAgingLine {
+  productId: string;
+  skuCode: string;
+  oldestAgeDays: number;
+  quantityRemaining: string;
+  value: string;
+}
+interface SupplierBalanceLine {
+  supplierId: string;
+  supplierName: string;
+  totalAdvancesPaid: string;
+  unappliedAdvance: string;
+  openPoCount: number;
+}
+interface CustomerBalanceLine {
+  customerId: string;
+  customerName: string;
+  bookedValue: string;
+  received: string;
+  outstanding: string;
+}
 
 function fmt(n: string | number) {
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -31,6 +52,11 @@ export function ReportsPage() {
   const { has } = useAuth();
   const financial = useFetch<FinancialSummary>(has("profit.view") ? "/reports/financial-summary" : null);
   const valuation = useFetch<InventoryValuation>(has("cost.view") ? "/reports/inventory-valuation" : null);
+  const aging = useFetch<StockAgingLine[]>(has("stock.count") ? "/reports/stock-aging" : null);
+  const supplierBalances = useFetch<SupplierBalanceLine[]>(
+    has("supplier.payment_details.view") ? "/reports/supplier-balances" : null,
+  );
+  const customerBalances = useFetch<CustomerBalanceLine[]>(has("profit.view") ? "/reports/customer-balances" : null);
 
   return (
     <div>
@@ -73,6 +99,87 @@ export function ReportsPage() {
                   <td>{l.skuCode}</td>
                   <td>{fmt(l.quantityRemaining)}</td>
                   <td>{fmt(l.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {aging.data && aging.data.length > 0 && (
+        <div className="panel">
+          <h3>Stock aging</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Oldest layer (days)</th>
+                <th>Remaining qty</th>
+                <th>Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aging.data.map((l) => (
+                <tr key={l.productId}>
+                  <td>{l.skuCode}</td>
+                  <td>{l.oldestAgeDays}</td>
+                  <td>{fmt(l.quantityRemaining)}</td>
+                  <td>{fmt(l.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {supplierBalances.data && supplierBalances.data.length > 0 && (
+        <div className="panel">
+          <h3>Supplier balances</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Supplier</th>
+                <th>Advances paid</th>
+                <th>Unapplied advance</th>
+                <th>Open POs with outstanding receipt</th>
+              </tr>
+            </thead>
+            <tbody>
+              {supplierBalances.data.map((s) => (
+                <tr key={s.supplierId}>
+                  <td>{s.supplierName}</td>
+                  <td>{fmt(s.totalAdvancesPaid)}</td>
+                  <td>{fmt(s.unappliedAdvance)}</td>
+                  <td>{s.openPoCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {customerBalances.data && customerBalances.data.length > 0 && (
+        <div className="panel">
+          <h3>Customer balances</h3>
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Booked value uses each line's unitPrice × quantity — not bundle-allocation-aware.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>Customer</th>
+                <th>Booked value</th>
+                <th>Received</th>
+                <th>Outstanding</th>
+              </tr>
+            </thead>
+            <tbody>
+              {customerBalances.data.map((c) => (
+                <tr key={c.customerId}>
+                  <td>{c.customerName}</td>
+                  <td>{fmt(c.bookedValue)}</td>
+                  <td>{fmt(c.received)}</td>
+                  <td>{fmt(c.outstanding)}</td>
                 </tr>
               ))}
             </tbody>

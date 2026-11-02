@@ -101,6 +101,121 @@ export async function getPendingRefunds() {
   return prisma.refund.findMany({ where: { status: { in: ["pending", "partially_refunded"] } } });
 }
 
+/**
+ * Stock aging: for each product, how long its oldest still-owned cost layer
+ * has been sitting (days since that layer was created), plus the total
+ * quantity still remaining across all its layers (any state) and its value.
+ * Spec section 12 lists "stock aging" as an operational report.
+ */
+export async function getStockAging() {
+  const costLayers = await prisma.costLayer.findMany({
+    where: { quantityRemaining: { gt: 0 } },
+    include: { lot: { include: { product: true } } },
+  });
+
+  const now = Date.now();
+  const byProduct = new Map<
+    string,
+    { productId: string; skuCode: string; oldestAgeDays: number; quantityRemaining: Decimal; value: Decimal }
+  >();
+
+  for (const cl of costLayers) {
+    const ageDays = Math.floor((now - cl.createdAt.getTime()) / (1000 * 60 * 60 * 24));
+    const key = cl.lot.productId;
+    const bucket =
+      byProduct.get(key) ??
+      { productId: key, skuCode: cl.lot.product.skuCode, oldestAgeDays: 0, quantityRemaining: new Decimal(0), value: new Decimal(0) };
+    bucket.oldestAgeDays = Math.max(bucket.oldestAgeDays, ageDays);
+    bucket.quantityRemaining = bucket.quantityRemaining.plus(cl.quantityRemaining);
+    bucket.value = bucket.value.plus(cl.quantityRemaining.times(cl.unitCost));
+    byProduct.set(key, bucket);
+  }
+
+  return [...byProduct.values()].sort((a, b) => b.oldestAgeDays - a.oldestAgeDays);
+}
+
+/**
+ * Per-supplier: total advances paid, how much of that is still unapplied
+ * to an invoice, and how many purchase orders still have outstanding
+ * (ordered - received) quantity. Spec section 12: "supplier performance".
+ */
+export async function getSupplierBalances() {
+  const suppliers = await prisma.supplier.findMany({ where: { isActive: true } });
+  const results = [];
+
+  for (const supplier of suppliers) {
+    const advances = await prisma.supplierAdvance.findMany({ where: { supplierId: supplier.id } });
+    const invoices = await prisma.supplierInvoice.findMany({ where: { supplierId: supplier.id } });
+    const totalAdvancesPaid = sumDecimal(advances.map((a) => a.amount));
+    const totalMatched = sumDecimal(invoices.map((i) => i.matchedAdvance));
+    const unappliedAdvance = totalAdvancesPaid.minus(totalMatched);
+
+    const openPos = await prisma.purchaseOrder.findMany({
+      where: { supplierId: supplier.id, status: { in: ["draft", "approved"] } },
+      include: { lines: true },
+    });
+    let openPoCount = 0;
+    for (const po of openPos) {
+      let hasOutstanding = false;
+      for (const line of po.lines) {
+        const grnLines = await prisma.gRNLine.findMany({ where: { poLineId: line.id } });
+        const receivedQty = sumDecimal(grnLines.map((g) => g.receivedQty));
+        if (line.orderedQty.minus(receivedQty).greaterThan(0)) hasOutstanding = true;
+      }
+      if (hasOutstanding) openPoCount += 1;
+    }
+
+    if (totalAdvancesPaid.greaterThan(0) || openPoCount > 0) {
+      results.push({ supplierId: supplier.id, supplierName: supplier.name, totalAdvancesPaid, unappliedAdvance, openPoCount });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Per-customer: booked order value (quantity * unitPrice where set — not
+ * bundle-allocation-aware, a documented simplification) vs. amount actually
+ * received via PaymentAllocation, giving an outstanding balance. Spec
+ * section 12: "customer balances".
+ */
+export async function getCustomerBalances() {
+  const customers = await prisma.customer.findMany({ where: { isActive: true } });
+  const results = [];
+
+  for (const customer of customers) {
+    const orders = await prisma.salesOrder.findMany({
+      where: { customerId: customer.id },
+      include: { lines: true },
+    });
+    if (orders.length === 0) continue;
+
+    let bookedValue = new Decimal(0);
+    for (const order of orders) {
+      for (const line of order.lines) {
+        if (line.unitPrice) bookedValue = bookedValue.plus(line.unitPrice.times(line.quantity));
+      }
+    }
+
+    const allocations = await prisma.paymentAllocation.findMany({
+      where: { orderId: { in: orders.map((o) => o.id) } },
+    });
+    const received = sumDecimal(allocations.map((a) => a.amount));
+
+    if (bookedValue.greaterThan(0) || received.greaterThan(0)) {
+      results.push({
+        customerId: customer.id,
+        customerName: customer.name,
+        bookedValue,
+        received,
+        outstanding: bookedValue.minus(received),
+      });
+    }
+  }
+
+  return results;
+}
+
 async function sumEntriesForAccountCode(code: string, params: { from?: Date; to?: Date }) {
   const account = await prisma.account.findUniqueOrThrow({ where: { code } });
   const entries = await prisma.ledgerEntry.findMany({

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
+import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 
 interface Product {
@@ -20,7 +21,9 @@ interface Category {
 
 export function ProductsPage() {
   const { has } = useAuth();
-  const products = useFetch<Product[]>("/products");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const products = useFetch<Product[]>(`/products${debouncedSearch ? `?search=${encodeURIComponent(debouncedSearch)}` : ""}`, [debouncedSearch]);
   const categories = useFetch<Category[]>("/settings/categories");
 
   const [showForm, setShowForm] = useState(false);
@@ -101,10 +104,18 @@ export function ProductsPage() {
       )}
 
       <div className="panel">
+        <div className="field" style={{ maxWidth: 320 }}>
+          <label>Search by SKU or name</label>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="e.g. jeans or SKU-123" />
+        </div>
         {products.loading && <p>Loading...</p>}
         {products.error && <div className="error-banner">{products.error}</div>}
         {products.data && (
-          <table>
+          <>
+            {products.data.length === 200 && (
+              <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Showing the first 200 matches — refine your search to narrow further.</p>
+            )}
+            <table>
             <thead>
               <tr>
                 <th>SKU</th>
@@ -127,7 +138,8 @@ export function ProductsPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </>
         )}
       </div>
     </div>
