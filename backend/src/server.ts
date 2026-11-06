@@ -1,6 +1,9 @@
 import { env } from "./config/env.js";
+import { mkdir } from "node:fs/promises";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
+import fastifyStatic from "@fastify/static";
 import { authPlugin } from "./middleware/auth.js";
 import { idempotencyPlugin } from "./middleware/idempotency.js";
 import { authRoutes } from "./modules/auth/authRoutes.js";
@@ -13,6 +16,7 @@ import { reportRoutes } from "./modules/reports/reportRoutes.js";
 import { masterDataRoutes } from "./modules/masterdata/masterDataRoutes.js";
 import { usersRoutes } from "./modules/users/usersRoutes.js";
 import { auditRoutes } from "./modules/audit/auditRoutes.js";
+import { mediaRoutes, UPLOADS_DIR } from "./modules/media/mediaRoutes.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -23,9 +27,15 @@ export async function buildServer() {
     allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
   });
 
+  await mkdir(UPLOADS_DIR, { recursive: true }); // @fastify/static requires `root` to exist at registration time
+
+  await app.register(multipart);
+  await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: "/media/files/", decorateReply: false });
+
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
   await app.register(authRoutes);
+  await app.register(mediaRoutes);
   await app.register(stockRoutes);
   await app.register(salesRoutes);
   await app.register(financeRoutes);
