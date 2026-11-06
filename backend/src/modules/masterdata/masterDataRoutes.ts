@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
 import { generateSkuCode } from "./skuGenerator.js";
 import { computeOrderCostSummary } from "../sales/salesOrderService.js";
+import { mediaUrl, deleteUploadedFile } from "../media/storage.js";
 
 /**
  * CRUD for owner-configurable master/reference data (spec section 5).
@@ -234,7 +235,8 @@ export async function masterDataRoutes(app: FastifyInstance) {
   // ---- Product photos ----
   app.get("/products/:id/photos", async (request) => {
     const { id } = request.params as { id: string };
-    return prisma.productPhoto.findMany({ where: { productId: id }, include: { media: true }, orderBy: { id: "asc" } });
+    const photos = await prisma.productPhoto.findMany({ where: { productId: id }, include: { media: true }, orderBy: { id: "asc" } });
+    return photos.map((p) => ({ ...p, url: mediaUrl(p.media.storageKey) }));
   });
   app.post(
     "/products/:id/photos",
@@ -255,7 +257,8 @@ export async function masterDataRoutes(app: FastifyInstance) {
     { preHandler: requirePermission("stock.receive") },
     async (request, reply) => {
       const { photoId } = request.params as { id: string; photoId: string };
-      await prisma.productPhoto.delete({ where: { id: photoId } });
+      const photo = await prisma.productPhoto.delete({ where: { id: photoId }, include: { media: true } });
+      await deleteUploadedFile(photo.media.storageKey);
       return reply.code(204).send();
     },
   );

@@ -51,14 +51,20 @@ export function PhotoCapture({
   );
 }
 
-export function PhotoThumbnails({ photos, onRemove }: { photos: UploadedPhoto[]; onRemove?: (id: string) => void }) {
+/** The backend returns either an absolute URL (Cloudflare R2) or a path relative to the API (local disk) — only prefix the latter. */
+function resolvePhotoUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
   const API_URL = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:3000`;
+  return `${API_URL}${url}`;
+}
+
+export function PhotoThumbnails({ photos, onRemove }: { photos: UploadedPhoto[]; onRemove?: (id: string) => void }) {
   if (photos.length === 0) return null;
   return (
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
       {photos.map((p) => (
         <div key={p.id} style={{ position: "relative" }}>
-          <img src={`${API_URL}${p.url}`} alt="" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: "var(--radius)", border: "1px solid var(--border)" }} />
+          <img src={resolvePhotoUrl(p.url)} alt="" style={{ width: 72, height: 72, objectFit: "cover", borderRadius: "var(--radius)", border: "1px solid var(--border)" }} />
           {onRemove && (
             <button
               type="button"

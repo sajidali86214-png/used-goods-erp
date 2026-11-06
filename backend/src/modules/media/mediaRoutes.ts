@@ -1,12 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { unlink } from "node:fs/promises";
 import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { prisma } from "../../lib/prisma.js";
+import { saveUploadedFile } from "./storage.js";
 
-export const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
+export { UPLOADS_DIR } from "./storage.js";
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"]);
 const MAX_SIZE_BYTES = 15 * 1024 * 1024; // plenty for a phone camera photo, not an open door for huge uploads
@@ -33,30 +31,25 @@ export async function mediaRoutes(app: FastifyInstance) {
 
     const ext = path.extname(data.filename) || ".jpg";
     const storageKey = `${randomUUID()}${ext}`;
-    const destPath = path.join(UPLOADS_DIR, storageKey);
 
-    let sizeBytes = 0;
-    data.file.on("data", (chunk: Buffer) => {
-      sizeBytes += chunk.length;
-    });
-    await pipeline(data.file, createWriteStream(destPath));
-
+    const body = await data.toBuffer();
     if (data.file.truncated) {
-      await unlink(destPath).catch(() => {});
       return reply.code(413).send({ error: "file_too_large", maxBytes: MAX_SIZE_BYTES });
     }
+
+    const url = await saveUploadedFile(storageKey, body, data.mimetype);
 
     const asset = await prisma.mediaAsset.create({
       data: {
         kind,
         storageKey,
         mimeType: data.mimetype,
-        sizeBytes,
+        sizeBytes: body.length,
         uploadedByUserId: request.authUser.id,
         uploadStatus: "complete",
       },
     });
 
-    return reply.code(201).send({ ...asset, url: `/media/files/${storageKey}` });
+    return reply.code(201).send({ ...asset, url });
   });
 }

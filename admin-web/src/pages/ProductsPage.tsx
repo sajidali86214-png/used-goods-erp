@@ -188,7 +188,7 @@ export function ProductsPage() {
 
 interface ProductPhotoRecord {
   id: string;
-  media: { storageKey: string };
+  url: string;
 }
 
 function ProductPhotoGallery({ productId }: { productId: string }) {
@@ -215,7 +215,7 @@ function ProductPhotoGallery({ productId }: { productId: string }) {
     }
   }
 
-  const thumbnails: UploadedPhoto[] = (photos.data ?? []).map((p) => ({ id: p.id, url: `/media/files/${p.media.storageKey}` }));
+  const thumbnails: UploadedPhoto[] = (photos.data ?? []).map((p) => ({ id: p.id, url: p.url }));
 
   return (
     <div style={{ padding: "8px 0" }}>
