@@ -30,6 +30,10 @@ interface OrderLine {
   productId: string;
   product: { skuCode: string; name: string };
   quantity: string;
+  unitPrice: string | null;
+  discount: string | null;
+  discountType: "percentage" | "fixed" | null;
+  discountValue: string | null;
   gradeRequirementType: string;
   allowedGradeIds: string[];
   exactGradeQuantities: Record<string, number> | null;
@@ -47,14 +51,42 @@ interface Shipment {
   status: string;
   lines: ShipmentLine[];
 }
+interface CostSummary {
+  totalQuantity: string;
+  discountTotal: string;
+  subtotal: string;
+  shippingTotal: string;
+  commissionBase: string;
+  commissionAmount: string;
+  netTotal: string;
+}
 interface OrderDetail {
   id: string;
   orderNumber: string;
+  externalOrderId: string | null;
   status: string;
   fulfilmentStatus: string;
-  customer: { name: string };
+  paymentStatus: string;
+  qcStatus: string;
+  channelId: string;
+  shippingPerUnit: string | null;
+  commissionType: "percentage" | "fixed" | null;
+  commissionValue: string | null;
+  notes: string | null;
+  customer: { id: string; name: string };
   lines: OrderLine[];
   shipments: Shipment[];
+  costSummary: CostSummary;
+}
+interface PaymentSummary {
+  amountDue: string;
+  amountReceived: string;
+  outstanding: string;
+}
+interface Channel {
+  id: string;
+  code: string;
+  label: string;
 }
 
 interface AllocationCandidate {
@@ -69,8 +101,10 @@ export function SalesOrderDetailPage() {
   const { has } = useAuth();
   const order = useFetch<OrderDetail>(`/sales/orders/${id}`);
   const grades = useFetch<Grade[]>("/settings/grades");
+  const paymentSummary = useFetch<PaymentSummary>(`/sales/orders/${id}/payment-summary`, [id]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   if (order.loading) return <p>Loading...</p>;
   if (!order.data) return <p>Order not found.</p>;
@@ -185,11 +219,66 @@ export function SalesOrderDetailPage() {
       <p>
         <Link to="/sales">← Back to orders</Link>
       </p>
-      <h1>{o.orderNumber}</h1>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h1>{o.orderNumber}</h1>
+        {o.paymentStatus === "unpaid" && has("order.create") && !editing && (
+          <button onClick={() => setEditing(true)}>Edit order</button>
+        )}
+      </div>
+      {o.externalOrderId && (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Platform order #: {o.externalOrderId}</p>
+      )}
       <p>
-        {o.customer.name} · <span className="badge">{o.status}</span> · <span className="badge">{o.fulfilmentStatus}</span>
+        <Link to={`/customers/${o.customer.id}`}>{o.customer.name}</Link> · <span className="badge">{o.status}</span> ·{" "}
+        <span className="badge">qc: {o.qcStatus}</span> · <span className="badge">{o.fulfilmentStatus}</span> ·{" "}
+        <span className="badge">payment: {o.paymentStatus}</span>
       </p>
+      {o.paymentStatus !== "unpaid" && (
+        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          This order's financial terms (price, discount, shipping, commission) can no longer be edited — payment has already been received against it.
+          Status below can still be updated any time.
+        </p>
+      )}
       {error && <div className="error-banner">{error}</div>}
+
+      {has("order.create") && (
+        <OrderStatusPanel
+          order={o}
+          onChanged={() => {
+            order.reload();
+            paymentSummary.reload();
+          }}
+        />
+      )}
+
+      <div className="panel">
+        <h3>Payment</h3>
+        {paymentSummary.data && (
+          <p>
+            Received <strong>{Number(paymentSummary.data.amountReceived).toLocaleString()}</strong> of{" "}
+            <strong>{Number(paymentSummary.data.amountDue).toLocaleString()}</strong> due
+            {Number(paymentSummary.data.outstanding) > 0 && ` — outstanding ${Number(paymentSummary.data.outstanding).toLocaleString()}`}
+          </p>
+        )}
+        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+          {Number(o.costSummary.discountTotal) > 0 && `Discount ${Number(o.costSummary.discountTotal).toLocaleString()} → `}
+          Subtotal {Number(o.costSummary.subtotal).toLocaleString()} − shipping {Number(o.costSummary.shippingTotal).toLocaleString()}
+          {o.commissionType && ` − commission ${Number(o.costSummary.commissionAmount).toLocaleString()}`} = net{" "}
+          {Number(o.costSummary.netTotal).toLocaleString()}
+        </p>
+      </div>
+
+      {editing && (
+        <OrderEditPanel
+          order={o}
+          onDone={() => {
+            setEditing(false);
+            order.reload();
+            paymentSummary.reload();
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      )}
 
       {o.lines.map((line) => {
         const picked = alreadyPicked(line);
@@ -421,6 +510,216 @@ function ExactCompositionPicker({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+const QC_STATUS_OPTIONS = ["pending", "approved", "rejected"];
+const PAYMENT_STATUS_OPTIONS = ["unpaid", "partially_paid", "paid"];
+const FULFILMENT_STATUS_OPTIONS = [
+  "unfulfilled",
+  "picking",
+  "packed",
+  "partially_dispatched",
+  "dispatched",
+  "partially_delivered",
+  "delivered",
+  "returned",
+  "cancelled",
+];
+
+function OrderStatusPanel({ order, onChanged }: { order: OrderDetail; onChanged: () => void }) {
+  const [qcStatus, setQcStatus] = useState(order.qcStatus);
+  const [paymentStatus, setPaymentStatus] = useState(order.paymentStatus);
+  const [fulfilmentStatus, setFulfilmentStatus] = useState(order.fulfilmentStatus);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const dirty = qcStatus !== order.qcStatus || paymentStatus !== order.paymentStatus || fulfilmentStatus !== order.fulfilmentStatus;
+
+  async function handleSave() {
+    setError(null);
+    setSaving(true);
+    try {
+      await api.patch(`/sales/orders/${order.id}/status`, { qcStatus, paymentStatus, fulfilmentStatus });
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update status");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Status</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        These are manual labels for tracking where the order stands — they don't move stock or post payments on their own.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field">
+          <label>QC status</label>
+          <select value={qcStatus} onChange={(e) => setQcStatus(e.target.value)}>
+            {QC_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Payment status</label>
+          <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+            {PAYMENT_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Fulfilment status</label>
+          <select value={fulfilmentStatus} onChange={(e) => setFulfilmentStatus(e.target.value)}>
+            {FULFILMENT_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <button onClick={handleSave} disabled={!dirty || saving}>
+        {saving ? "Saving..." : "Save status"}
+      </button>
+    </div>
+  );
+}
+
+function OrderEditPanel({ order, onDone, onCancel }: { order: OrderDetail; onDone: () => void; onCancel: () => void }) {
+  const channels = useFetch<Channel[]>("/settings/channels");
+  const firstLine = order.lines[0];
+
+  const [externalOrderId, setExternalOrderId] = useState(order.externalOrderId ?? "");
+  const [channelId, setChannelId] = useState(order.channelId);
+  const [notes, setNotes] = useState(order.notes ?? "");
+  const [shippingPerUnit, setShippingPerUnit] = useState(order.shippingPerUnit ?? "");
+  const [commissionType, setCommissionType] = useState<"none" | "percentage" | "fixed">(order.commissionType ?? "none");
+  const [commissionValue, setCommissionValue] = useState(order.commissionValue ?? "");
+  const [quantity, setQuantity] = useState(firstLine?.quantity ?? "");
+  const [unitPrice, setUnitPrice] = useState(firstLine?.unitPrice ?? "");
+  const [discountType, setDiscountType] = useState<"none" | "percentage" | "fixed">(firstLine?.discountType ?? "none");
+  const [discountValue, setDiscountValue] = useState(firstLine?.discountValue ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSave() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.patch(`/sales/orders/${order.id}`, {
+        externalOrderId: externalOrderId || undefined,
+        channelId,
+        notes: notes || undefined,
+        shippingPerUnit: shippingPerUnit ? Number(shippingPerUnit) : undefined,
+        commissionType: commissionType === "none" ? null : commissionType,
+        commissionValue: commissionType === "none" ? undefined : Number(commissionValue) || 0,
+      });
+      if (firstLine) {
+        await api.patch(`/sales/order-lines/${firstLine.id}`, {
+          quantity: quantity ? Number(quantity) : undefined,
+          unitPrice: unitPrice ? Number(unitPrice) : undefined,
+          discountType: discountType === "none" ? null : discountType,
+          discountValue: discountType === "none" ? undefined : Number(discountValue) || 0,
+        });
+      }
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save changes");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Edit order</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Editable until payment is received against this order.</p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field">
+          <label>Channel</label>
+          <select value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+            {channels.data?.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Platform order #</label>
+          <input value={externalOrderId} onChange={(e) => setExternalOrderId(e.target.value)} />
+        </div>
+      </div>
+      {firstLine && (
+        <div className="form-row">
+          <div className="field">
+            <label>Quantity ({firstLine.product.skuCode})</label>
+            <input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} min={1} />
+          </div>
+          <div className="field">
+            <label>Unit price</label>
+            <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} min={0} step="0.01" />
+          </div>
+          <div className="field">
+            <label>Discount</label>
+            <select value={discountType} onChange={(e) => setDiscountType(e.target.value as typeof discountType)}>
+              <option value="none">No discount</option>
+              <option value="percentage">Percentage (%)</option>
+              <option value="fixed">Fixed amount</option>
+            </select>
+          </div>
+          {discountType !== "none" && (
+            <div className="field">
+              <label>{discountType === "percentage" ? "Discount %" : "Discount amount"}</label>
+              <input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} min={0} step="0.01" />
+            </div>
+          )}
+        </div>
+      )}
+      <div className="form-row">
+        <div className="field">
+          <label>Shipping per piece</label>
+          <input type="number" value={shippingPerUnit} onChange={(e) => setShippingPerUnit(e.target.value)} min={0} step="0.01" />
+        </div>
+        <div className="field">
+          <label>Commission</label>
+          <select value={commissionType} onChange={(e) => setCommissionType(e.target.value as typeof commissionType)}>
+            <option value="none">No commission</option>
+            <option value="percentage">Percentage (%)</option>
+            <option value="fixed">Fixed amount</option>
+          </select>
+        </div>
+        {commissionType !== "none" && (
+          <div className="field">
+            <label>{commissionType === "percentage" ? "Commission %" : "Commission amount"}</label>
+            <input type="number" value={commissionValue} onChange={(e) => setCommissionValue(e.target.value)} min={0} step="0.01" />
+          </div>
+        )}
+      </div>
+      <div className="field">
+        <label>Notes</label>
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={handleSave} disabled={submitting}>
+          {submitting ? "Saving..." : "Save changes"}
+        </button>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

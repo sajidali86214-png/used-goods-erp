@@ -151,19 +151,82 @@ function AccountsTab() {
             <tr>
               <th>Label</th>
               <th>Kind</th>
+              <th>Balance</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {accounts.data.map((a) => (
-              <tr key={a.id}>
-                <td>{a.label}</td>
-                <td>{a.kind}</td>
-              </tr>
+              <AccountRow key={a.id} account={a} onChanged={() => accounts.reload()} />
             ))}
           </tbody>
         </table>
       )}
     </div>
+  );
+}
+
+function AccountRow({ account, onChanged }: { account: Account; onChanged: () => void }) {
+  const balance = useFetch<{ balance: string }>(`/finance/accounts/${account.id}/balance`);
+  const [showOpeningBalance, setShowOpeningBalance] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setError(null);
+    setSaving(true);
+    try {
+      const tx = await api.post<{ id: string }>("/finance/owner-transactions", {
+        accountId: account.id,
+        amount: Number(amount),
+        type: "contribution",
+      });
+      await api.post(`/finance/post/owner-transactions/${tx.id}`);
+      setShowOpeningBalance(false);
+      setAmount("");
+      balance.reload();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not set opening balance");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <tr>
+        <td>{account.label}</td>
+        <td>{account.kind}</td>
+        <td>{balance.data ? Number(balance.data.balance).toLocaleString() : "..."}</td>
+        <td>
+          <button className="secondary" onClick={() => setShowOpeningBalance((v) => !v)}>
+            {showOpeningBalance ? "Cancel" : "Opening balance"}
+          </button>
+        </td>
+      </tr>
+      {showOpeningBalance && (
+        <tr>
+          <td colSpan={4}>
+            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "4px 0" }}>
+              Records the money already in this account before go-live, as an owner contribution (debits this account, credits Owner's Equity). Only
+              available for PKR accounts.
+            </p>
+            {error && <div className="error-banner">{error}</div>}
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <div className="field" style={{ maxWidth: 200 }}>
+                <label>Opening balance amount</label>
+                <input type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+              </div>
+              <button disabled={saving || !amount} onClick={handleSave}>
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

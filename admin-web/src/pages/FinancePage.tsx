@@ -123,7 +123,7 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
         </div>
         <div className="field">
           <label>Amount</label>
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} />
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} step="0.01" />
         </div>
       </div>
       <button type="submit">Record expense</button>
@@ -209,7 +209,7 @@ function ReceiptForm({ accounts, currencies }: { accounts: Account[]; currencies
         </div>
         <div className="field">
           <label>Amount received</label>
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} />
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} step="0.01" />
         </div>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: 12 }}>
