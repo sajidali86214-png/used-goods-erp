@@ -87,6 +87,23 @@ h1, h2, h3 {
   flex: 1;
   padding: 24px 32px;
   max-width: 1200px;
+  width: 100%;
+}
+
+.topbar {
+  display: none;
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  padding: 8px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.drawer-backdrop {
+  display: none;
 }
 
 .panel {
@@ -263,4 +280,143 @@ button:disabled {
   border-radius: var(--radius);
   padding: 32px;
   width: 340px;
+}
+
+/* ---------- Mobile (phones & narrow tablets) ---------- */
+@media (max-width: 860px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #111827;
+    color: white;
+    padding: 10px 12px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
+  .topbar .icon-button {
+    font-size: 20px;
+  }
+
+  .hamburger,
+  .hamburger::before,
+  .hamburger::after {
+    display: block;
+    width: 22px;
+    height: 2px;
+    background: white;
+    border-radius: 2px;
+  }
+  .hamburger {
+    position: relative;
+  }
+  .hamburger::before,
+  .hamburger::after {
+    content: "";
+    position: absolute;
+    left: 0;
+  }
+  .hamburger::before {
+    top: -7px;
+  }
+  .hamburger::after {
+    top: 7px;
+  }
+
+  .topbar-title {
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 29;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 260px;
+    max-width: 82vw;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 30;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+  }
+
+  .sidebar .brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .drawer-close {
+    display: inline-block;
+    font-size: 16px;
+  }
+
+  .main {
+    padding: 16px;
+    max-width: 100%;
+  }
+
+  .panel {
+    padding: 14px;
+    overflow-x: auto;
+  }
+
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  table {
+    font-size: 12px;
+  }
+
+  th,
+  td {
+    padding: 8px 6px;
+    white-space: nowrap;
+  }
+
+  button {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+
+  input,
+  select,
+  textarea {
+    padding: 10px 12px;
+    font-size: 15px; /* 16px avoids iOS Safari's auto-zoom on focus; 15px is the visual floor that still reads as in-brand */
+  }
+
+  .stat-grid {
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  }
+}
+
+@media (min-width: 861px) {
+  .drawer-close {
+    display: none;
+  }
 }
