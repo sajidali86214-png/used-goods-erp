@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { seedSalesReferenceData } from "./salesHelpers.js";
@@ -18,7 +18,6 @@ describe("price.override: a line priced below the product's minPrice is gated an
 
     await expect(
       createDraftOrder({
-        orderNumber: `SO-${randomUUID()}`,
         channelId: channel.id,
         customerId: customer.id,
         currencyId: currency.id,
@@ -30,7 +29,6 @@ describe("price.override: a line priced below the product's minPrice is gated an
 
     await expect(
       createDraftOrder({
-        orderNumber: `SO-${randomUUID()}`,
         channelId: channel.id,
         customerId: customer.id,
         currencyId: currency.id,
@@ -41,7 +39,6 @@ describe("price.override: a line priced below the product's minPrice is gated an
     ).rejects.toThrow(/priceOverrideReason/);
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -58,7 +55,6 @@ describe("price.override: a line priced below the product's minPrice is gated an
 
     // A normally-priced line (no minPrice violation) needs no permission or reason at all.
     const normalOrder = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,

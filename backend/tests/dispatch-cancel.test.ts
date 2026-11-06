@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -29,7 +29,6 @@ describe("acceptance test #9: partial dispatch then cancel the remaining unshipp
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -130,7 +129,7 @@ describe("acceptance test #9: partial dispatch then cancel the remaining unshipp
       cancelReservedOrPickedQuantity({
         reservationId: reservation.id,
         quantity: 1,
-        reason: "should fail — nothing left to cancel",
+        reason: "should fail â€” nothing left to cancel",
         actorUserId: user.id,
       }),
     ).rejects.toThrow(/undispatched/);

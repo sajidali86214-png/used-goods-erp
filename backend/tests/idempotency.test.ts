@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+﻿import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
@@ -49,18 +49,16 @@ describe("acceptance test #15: retrying after a simulated connection timeout", (
 
   it("creates only one order when the same request is retried with the same Idempotency-Key", async () => {
     const { product, currency, channel, customer } = await seedSalesReferenceData();
-    const orderNumber = `SO-${randomUUID()}`;
     const idempotencyKey = randomUUID();
 
     const payload = {
-      orderNumber,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
       lines: [{ productId: product.id, quantity: 5, unitPrice: 100 }],
     };
 
-    // First attempt — the client never sees this response (simulated timeout).
+    // First attempt â€” the client never sees this response (simulated timeout).
     const firstResponse = await app.inject({
       method: "POST",
       url: "/sales/orders",
@@ -81,7 +79,8 @@ describe("acceptance test #15: retrying after a simulated connection timeout", (
     expect(secondResponse.json()).toEqual(firstResponse.json());
 
     // Only one order/line (and therefore one corresponding movement set) actually exists.
-    const orders = await prisma.salesOrder.findMany({ where: { orderNumber } });
+    const createdOrderId = firstResponse.json().id;
+    const orders = await prisma.salesOrder.findMany({ where: { id: createdOrderId } });
     expect(orders).toHaveLength(1);
   });
 
@@ -89,7 +88,6 @@ describe("acceptance test #15: retrying after a simulated connection timeout", (
     const { product, currency, channel, customer } = await seedSalesReferenceData();
 
     const makePayload = () => ({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -111,6 +109,6 @@ describe("acceptance test #15: retrying after a simulated connection timeout", (
 
     expect(res1.statusCode).toBe(201);
     expect(res2.statusCode).toBe(201);
-    expect(res1.json().id).not.toBe(res2.json().id); // two distinct orders — no key means no dedup
+    expect(res1.json().id).not.toBe(res2.json().id); // two distinct orders â€” no key means no dedup
   });
 });

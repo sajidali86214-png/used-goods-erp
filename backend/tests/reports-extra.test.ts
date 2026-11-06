@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -41,7 +41,6 @@ describe("extra reports: stock aging, supplier balances, customer balances", () 
     const { product, currency, channel, customer, user } = await seedSalesReferenceData();
 
     const order = await createDraftOrder({
-      orderNumber: `SO-BAL-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,

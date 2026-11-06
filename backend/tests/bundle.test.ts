@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { seedSalesReferenceData } from "./salesHelpers.js";
@@ -15,7 +15,6 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
     const bundleGroupId = randomUUID();
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -33,7 +32,7 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
       await prisma.salesOrderLine.update({ where: { id: line.id }, data: { bundleGroupId } });
     }
 
-    // 100 / 3 does not divide evenly at 4 decimal places — exercises the remainder rule.
+    // 100 / 3 does not divide evenly at 4 decimal places â€” exercises the remainder rule.
     const results = await allocateBundle({ bundleGroupId, totalBundlePrice: 100 });
     expect(results).toHaveLength(3);
 
@@ -64,7 +63,6 @@ describe("acceptance test #19: bundle total, discount, and shipping allocate exa
     const bundleGroupId = randomUUID();
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,

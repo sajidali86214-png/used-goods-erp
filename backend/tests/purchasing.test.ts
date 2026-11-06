@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { seedReferenceData } from "./helpers.js";
@@ -24,7 +24,6 @@ describe("acceptance test #3: partial receipt of a prepaid PO", () => {
     });
 
     const po = await createPurchaseOrder({
-      poNumber: `PO-${randomUUID()}`,
       supplierId: supplier.id,
       currencyId: currency.id,
       lines: [{ productId: product.id, orderedQty: 100, unitPrice: 50 }],
@@ -44,7 +43,6 @@ describe("acceptance test #3: partial receipt of a prepaid PO", () => {
 
     // Only 60 of the 100 ordered pieces actually arrive.
     const grn = await createGRN({
-      grnNumber: `GRN-${randomUUID()}`,
       supplierId: supplier.id,
       receiptDate: new Date(),
       receivingUserId: user.id,
@@ -58,7 +56,7 @@ describe("acceptance test #3: partial receipt of a prepaid PO", () => {
     expect(status.totalAdvance.toNumber()).toBe(5000);
     expect(status.unappliedAdvance.toNumber()).toBe(5000); // not re-recorded, not yet matched to an invoice
 
-    // Exactly one advance payment exists for this PO — receiving stock never created another.
+    // Exactly one advance payment exists for this PO â€” receiving stock never created another.
     const advancesForPO = await prisma.supplierAdvance.findMany({ where: { poId: po.id } });
     expect(advancesForPO).toHaveLength(1);
     expect(advancesForPO[0]!.id).toBe(advance.id);
@@ -83,7 +81,6 @@ describe("acceptance test #3: partial receipt of a prepaid PO", () => {
     // Receiving the rest later must still respect the ordered quantity.
     await expect(
       createGRN({
-        grnNumber: `GRN-${randomUUID()}`,
         supplierId: supplier.id,
         receiptDate: new Date(),
         receivingUserId: user.id,
@@ -92,7 +89,6 @@ describe("acceptance test #3: partial receipt of a prepaid PO", () => {
     ).rejects.toThrow(/exceed the ordered quantity/);
 
     const finalGrn = await createGRN({
-      grnNumber: `GRN-${randomUUID()}`,
       supplierId: supplier.id,
       receiptDate: new Date(),
       receivingUserId: user.id,

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -26,7 +26,6 @@ async function dispatchFreshLine(params: {
   userId: string;
 }) {
   const order = await createDraftOrder({
-    orderNumber: `SO-${randomUUID()}`,
     channelId: params.channelId,
     customerId: params.customerId,
     currencyId: params.currencyId,
@@ -114,7 +113,7 @@ describe("acceptance test #10: regraded return with a partial refund", () => {
     expect(inspected).toHaveLength(2);
     expect(inspected.reduce((sum, l) => sum + l.quantity.toNumber(), 0)).toBe(5);
 
-    // Both outcomes kept the original 500 cost basis — look up where they landed.
+    // Both outcomes kept the original 500 cost basis â€” look up where they landed.
     const gradeACostLayer = await prisma.costLayer.findFirstOrThrow({
       where: { lotId: costLayer.lotId, gradeId: gradeA.id },
     });
@@ -185,7 +184,6 @@ describe("acceptance test #11: origin-uncertain return from a multi-lot order", 
 
     // One order line fulfilled from two lots (multi-lot dispatch).
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -231,7 +229,7 @@ describe("acceptance test #11: origin-uncertain return from a multi-lot order", 
       originGradeId: gradeA.id,
       quantity: 4,
       originUncertain: true,
-      assumptionNotes: "Multi-lot dispatch, exact origin unknown — approved assumption: allocate to lot 1 (FIFO)",
+      assumptionNotes: "Multi-lot dispatch, exact origin unknown â€” approved assumption: allocate to lot 1 (FIFO)",
       actorUserId: user.id,
     });
     expect(returnLine.originUncertain).toBe(true);

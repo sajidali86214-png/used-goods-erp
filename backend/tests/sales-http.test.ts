@@ -1,10 +1,10 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+﻿import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import argon2 from "argon2";
 import type { FastifyInstance } from "fastify";
 import { buildServer } from "../src/server.js";
 import { prisma } from "../src/lib/prisma.js";
 
-/** New /sales/* endpoints are gated the same way as /products/:id/cost-layers — verify over real HTTP. */
+/** New /sales/* endpoints are gated the same way as /products/:id/cost-layers â€” verify over real HTTP. */
 describe("sales routes RBAC (HTTP)", () => {
   let app: FastifyInstance;
   let pickerToken: string;
@@ -74,7 +74,6 @@ describe("sales routes RBAC (HTTP)", () => {
       url: "/sales/orders",
       headers: { authorization: `Bearer ${pickerToken}` },
       payload: {
-        orderNumber: "SO-TEST-1",
         channelId: "00000000-0000-0000-0000-000000000000",
         customerId: "00000000-0000-0000-0000-000000000000",
         currencyId: "00000000-0000-0000-0000-000000000000",

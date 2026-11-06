@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -34,7 +34,6 @@ describe("reports: stock summary and inventory valuation reconcile with the ledg
   it("an unfulfilled order shows up until it's fully delivered", async () => {
     const { channel, customer, currency, product, user } = await seedSalesReferenceData();
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -55,7 +54,6 @@ describe("reports: stock summary and inventory valuation reconcile with the ledg
     await receiveSaleable({ productId: product.id, binId: bin.id, currencyId: currency.id, gradeId: gradeA.id, unitPrice: 600, quantity: 30, actorUserId: user.id });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,

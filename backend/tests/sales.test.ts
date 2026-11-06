@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { prisma } from "../src/lib/prisma.js";
 import { randomUUID } from "node:crypto";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -36,7 +36,6 @@ describe("acceptance test #4: mixed-grade order with no promised ratio", () => {
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -63,7 +62,7 @@ describe("acceptance test #4: mixed-grade order with no promised ratio", () => {
       });
     }
 
-    // Picking confirms the actual mix — here it matches what was reserved exactly.
+    // Picking confirms the actual mix â€” here it matches what was reserved exactly.
     const picks = [];
     for (const candidate of candidates) {
       picks.push(
@@ -105,7 +104,6 @@ describe("acceptance test #5: A-only restricted order rejects Grade B unless ame
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -196,7 +194,6 @@ describe("acceptance test #6: gross profit from two lots matches the worked exam
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -251,7 +248,6 @@ describe("acceptance test #7: two concurrent reservations for the last ten piece
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { seedSalesReferenceData, receiveSaleable } from "./salesHelpers.js";
@@ -17,7 +17,7 @@ describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR con
     const gbp = await prisma.currency.upsert({
       where: { code: "GBP" },
       update: {},
-      create: { code: "GBP", symbol: "£" },
+      create: { code: "GBP", symbol: "Â£" },
     });
     const pkr = await prisma.currency.upsert({
       where: { code: "PKR" },
@@ -45,7 +45,6 @@ describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR con
     });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: fleek.id,
       customerId: customer.id,
       currencyId: gbp.id,
@@ -113,7 +112,7 @@ describe("acceptance test #13: refreshing exchange rates never changes historica
       source: "test-old",
     });
 
-    // A lot received using the rate in effect at the time — this is Stage 1's
+    // A lot received using the rate in effect at the time â€” this is Stage 1's
     // Lot.exchangeRate, locked at receipt and never touched again.
     const costLayer = await receiveSaleable({
       productId: product.id,
@@ -127,7 +126,7 @@ describe("acceptance test #13: refreshing exchange rates never changes historica
     const lot = await prisma.lot.findUniqueOrThrow({ where: { id: costLayer.lotId } });
     expect(lot.exchangeRate.toNumber()).toBe(1);
 
-    // Simulate a rate refresh — a brand new snapshot, the old one is never mutated.
+    // Simulate a rate refresh â€” a brand new snapshot, the old one is never mutated.
     await lockExchangeRate({
       fromCurrencyId: currency.id,
       toCurrencyId: currency.id,

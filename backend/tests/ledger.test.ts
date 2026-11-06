@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+﻿import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../src/lib/prisma.js";
 import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
@@ -92,7 +92,6 @@ describe("finance ledger: every posting is balanced and account balances reflect
       data: { name: "Ledger Test User", email: `ledger-${randomUUID()}@example.com`, passwordHash: "x" },
     });
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: pkr.id,
@@ -135,7 +134,6 @@ describe("finance ledger: every posting is balanced and account balances reflect
     await receiveSaleable({ productId: product.id, binId: bin.id, currencyId: currency.id, gradeId: gradeA.id, unitPrice: 600, quantity: 30, actorUserId: user.id });
 
     const order = await createDraftOrder({
-      orderNumber: `SO-${randomUUID()}`,
       channelId: channel.id,
       customerId: customer.id,
       currencyId: currency.id,
@@ -172,7 +170,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
   });
 
   it("rejects posting a non-PKR amount rather than guessing an FX treatment", async () => {
-    const gbp = await prisma.currency.upsert({ where: { code: "GBP" }, update: {}, create: { code: "GBP", symbol: "£" } });
+    const gbp = await prisma.currency.upsert({ where: { code: "GBP" }, update: {}, create: { code: "GBP", symbol: "Â£" } });
     const bank = await prisma.account.create({ data: { label: `GBP-${randomUUID()}`, currencyId: gbp.id, kind: "bank" } });
     const category = await prisma.expenseCategory.create({ data: { label: "Foreign expense" } });
 
