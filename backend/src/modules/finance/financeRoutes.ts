@@ -46,6 +46,13 @@ const conversionSchema = z.object({
   bankCharges: z.number().nonnegative().optional(),
 });
 
+const createOwnerTransactionSchema = z.object({
+  accountId: z.string().uuid(),
+  amount: z.number().positive(),
+  type: z.enum(["contribution", "withdrawal"]),
+  occurredAt: z.coerce.date().optional(),
+});
+
 const createExpenseSchema = z.object({
   date: z.coerce.date(),
   payeeType: z.enum(["supplier", "other"]),
@@ -69,6 +76,21 @@ export async function financeRoutes(app: FastifyInstance) {
         data: { ...body, amount: new Decimal(body.amount), approvedByUserId: request.authUser!.id },
       });
       return reply.code(201).send(expense);
+    },
+  );
+
+  // Also how an account's opening balance is recorded — create the
+  // transaction here, then post it via /finance/post/owner-transactions/:id
+  // (same two-step pattern as expenses/receipts below).
+  app.post(
+    "/finance/owner-transactions",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = createOwnerTransactionSchema.parse(request.body);
+      const tx = await prisma.ownerTransaction.create({
+        data: { ...body, amount: new Decimal(body.amount) },
+      });
+      return reply.code(201).send(tx);
     },
   );
 

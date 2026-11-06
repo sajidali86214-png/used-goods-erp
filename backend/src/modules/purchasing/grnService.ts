@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal } from "../../lib/money.js";
+import { generateSequentialNumber } from "../../lib/sequentialNumber.js";
 
 interface GRNLineInput {
   poLineId?: string;
@@ -9,6 +10,14 @@ interface GRNLineInput {
   inspectionNotes?: string;
 }
 
+export async function generateGrnNumber(): Promise<string> {
+  return generateSequentialNumber({
+    prefix: "GRN",
+    countExisting: () => prisma.gRN.count(),
+    exists: async (candidate) => !!(await prisma.gRN.findUnique({ where: { grnNumber: candidate } })),
+  });
+}
+
 /**
  * Records the PHYSICAL receipt document only — explicitly distinct from
  * inspection/acceptance into saleable stock (spec section 6.3). Creating a
@@ -16,9 +25,9 @@ interface GRNLineInput {
  * of a prepaid PO can never re-record the payment (acceptance test #3).
  * Actually placing received quantity into inventory is a separate step —
  * call stockService.receiveToInspection with the resulting GRNLine's id.
+ * grnNumber is always assigned automatically — never typed by hand.
  */
 export async function createGRN(params: {
-  grnNumber: string;
   supplierId: string;
   receiptDate: Date;
   deliveryReference?: string;
@@ -41,9 +50,10 @@ export async function createGRN(params: {
     }
   }
 
+  const grnNumber = await generateGrnNumber();
   return prisma.gRN.create({
     data: {
-      grnNumber: params.grnNumber,
+      grnNumber,
       supplierId: params.supplierId,
       receiptDate: params.receiptDate,
       deliveryReference: params.deliveryReference,

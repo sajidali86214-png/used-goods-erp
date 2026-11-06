@@ -579,8 +579,10 @@ model ExchangeRateSnapshot {
 model Customer {
   id        String   @id @default(uuid())
   name      String
-  contact   String?
+  contact   String? // phone or email
   address   String?
+  city      String?
+  country   String?
   notes     String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -598,11 +600,19 @@ model SalesOrder {
   currencyId        String
   status            String   @default("draft") // draft | confirmed | partially_cancelled | cancelled | closed
   paymentStatus     String   @default("unpaid") // unpaid | partially_paid | paid
-  fulfilmentStatus  String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered
+  fulfilmentStatus  String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered | returned | cancelled
+  qcStatus          String   @default("pending") // pending | approved | rejected — manual quality-check gate before an order ships
   returnStatus      String   @default("none") // none | requested | authorized | partially_received | received | inspected | resolved
   refundStatus      String   @default("none") // none | pending | partially_refunded | refunded
   salespersonUserId String?
   notes             String?
+  shippingPerUnit   Decimal? @db.Decimal(18, 4) // per-piece shipping cost; total = shippingPerUnit * sum(line quantities)
+  commissionType    String? // percentage | fixed
+  commissionValue   Decimal? @db.Decimal(18, 4) // meaning depends on commissionType: a % or an absolute amount
+  paymentReceivedAmount Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark payment received" popup — no ledger/account impact
+  returnedQuantity      Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark returned" popup — pieces returned, not stock-movement-backed
+  refundAmount          Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark returned" popup
+  cancellationAmount    Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark cancelled" popup
   createdAt         DateTime @default(now())
 
   customer           Customer            @relation(fields: [customerId], references: [id])
@@ -626,7 +636,9 @@ model SalesOrderLine {
   unitPrice            Decimal? @db.Decimal(18, 4)
   bundleGroupId        String? // lines sharing this id share one bundle total price
   bundleTotalPrice     Decimal? @db.Decimal(18, 4)
-  discount             Decimal? @db.Decimal(18, 4)
+  discount             Decimal? @db.Decimal(18, 4) // legacy flat-amount discount; superseded by discountType/discountValue when set
+  discountType         String? // percentage | fixed
+  discountValue        Decimal? @db.Decimal(18, 4) // meaning depends on discountType: a % of (quantity * unitPrice), or an absolute amount
   taxesFees            Decimal? @db.Decimal(18, 4)
   createdAt            DateTime @default(now())
 

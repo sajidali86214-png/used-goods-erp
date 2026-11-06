@@ -241,10 +241,18 @@ export async function postTransfer(transferId: string) {
   });
 }
 
-/** Excluded from trading P&L by construction — only ever touches a bank account and Owner's Equity. */
+/**
+ * Excluded from trading P&L by construction — only ever touches a bank
+ * account and Owner's Equity. Also how an account's opening balance gets
+ * recorded (a "contribution" dated at go-live): the account didn't earn
+ * that money through trading, so it has to enter the books some way other
+ * than revenue, and crediting Owner's Equity is the standard treatment.
+ */
 export async function postOwnerTransaction(ownerTransactionId: string) {
   const tx = await prisma.ownerTransaction.findUniqueOrThrow({ where: { id: ownerTransactionId } });
+  const account = await prisma.account.findUniqueOrThrow({ where: { id: tx.accountId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+  assertPkr(account.currencyId, pkr.id, "postOwnerTransaction");
   const ownersEquity = await controlAccount("OWNERS_EQUITY");
 
   const isContribution = tx.type === "contribution";

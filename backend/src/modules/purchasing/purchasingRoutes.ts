@@ -12,7 +12,6 @@ import { createGRN } from "./grnService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
-  poNumber: z.string().min(1),
   supplierId: z.string().uuid(),
   currencyId: z.string().uuid(),
   expectedReceiptDate: z.coerce.date().optional(),
@@ -42,7 +41,6 @@ const advanceSchema = z.object({
 });
 
 const createGRNSchema = z.object({
-  grnNumber: z.string().min(1),
   supplierId: z.string().uuid(),
   receiptDate: z.coerce.date(),
   deliveryReference: z.string().optional(),

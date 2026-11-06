@@ -6,3 +6,8 @@ dist/
 .DS_Store
 coverage/
 *.tsbuildinfo
+
+# Runtime data — never source, never meant to be committed
+backend/uploads/
+backups/
+admin-web/dev-dist/

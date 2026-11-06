@@ -2,8 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
 import { prisma } from "../../lib/prisma.js";
-import { Decimal } from "../../lib/money.js";
+import { Decimal, sumDecimal } from "../../lib/money.js";
 import { generateSkuCode } from "./skuGenerator.js";
+import { computeOrderCostSummary } from "../sales/salesOrderService.js";
 
 /**
  * CRUD for owner-configurable master/reference data (spec section 5).
@@ -230,6 +231,35 @@ export async function masterDataRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---- Product photos ----
+  app.get("/products/:id/photos", async (request) => {
+    const { id } = request.params as { id: string };
+    return prisma.productPhoto.findMany({ where: { productId: id }, include: { media: true }, orderBy: { id: "asc" } });
+  });
+  app.post(
+    "/products/:id/photos",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = z.object({ mediaAssetId: z.string().uuid(), caption: z.string().optional() }).parse(request.body);
+      const existingCount = await prisma.productPhoto.count({ where: { productId: id } });
+      const photo = await prisma.productPhoto.create({
+        data: { productId: id, mediaAssetId: body.mediaAssetId, caption: body.caption, isRepresentative: existingCount === 0 },
+        include: { media: true },
+      });
+      return reply.code(201).send(photo);
+    },
+  );
+  app.delete(
+    "/products/:id/photos/:photoId",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { photoId } = request.params as { id: string; photoId: string };
+      await prisma.productPhoto.delete({ where: { id: photoId } });
+      return reply.code(204).send();
+    },
+  );
+
   // ---- Suppliers ----
   app.get("/suppliers", async (request) => {
     const { search } = request.query as { search?: string };
@@ -280,8 +310,86 @@ export async function masterDataRoutes(app: FastifyInstance) {
     "/customers",
     { preHandler: requirePermission("order.create") },
     async (request, reply) => {
-      const body = z.object({ name: z.string().min(1), contact: z.string().optional(), address: z.string().optional(), notes: z.string().optional() }).parse(request.body);
+      const body = z
+        .object({
+          name: z.string().min(1),
+          contact: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          country: z.string().optional(),
+          notes: z.string().optional(),
+        })
+        .parse(request.body);
       return reply.code(201).send(await prisma.customer.create({ data: body }));
+    },
+  );
+
+  app.get("/customers/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const customer = await prisma.customer.findUnique({ where: { id } });
+    if (!customer) return reply.code(404).send({ error: "not_found" });
+
+    const orders = await prisma.salesOrder.findMany({
+      where: { customerId: id },
+      include: { lines: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Net receivable per order, after discount/shipping/commission — not the raw
+    // gross (quantity * unitPrice) — since that's what the customer actually owes.
+    let bookedValue = new Decimal(0);
+    for (const order of orders) {
+      bookedValue = bookedValue.plus(computeOrderCostSummary(order).netTotal);
+    }
+    // Per order: the manual "payment received" popup amount takes precedence
+    // over real PaymentAllocation totals, same rule as getOrderPaymentSummary.
+    const ordersNeedingAllocationLookup = orders.filter((o) => o.paymentReceivedAmount === null);
+    const allocations = await prisma.paymentAllocation.findMany({
+      where: { orderId: { in: ordersNeedingAllocationLookup.map((o) => o.id) } },
+    });
+    let received = new Decimal(0);
+    for (const order of orders) {
+      if (order.paymentReceivedAmount !== null) {
+        received = received.plus(order.paymentReceivedAmount);
+      } else {
+        received = received.plus(sumDecimal(allocations.filter((a) => a.orderId === order.id).map((a) => a.amount)));
+      }
+    }
+
+    return {
+      ...customer,
+      orders: orders.map((o) => ({
+        id: o.id,
+        orderNumber: o.orderNumber,
+        externalOrderId: o.externalOrderId,
+        status: o.status,
+        fulfilmentStatus: o.fulfilmentStatus,
+        paymentStatus: o.paymentStatus,
+        createdAt: o.createdAt,
+        lineCount: o.lines.length,
+      })),
+      balance: { bookedValue, received, outstanding: bookedValue.minus(received) },
+    };
+  });
+
+  app.patch(
+    "/customers/:id",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = z
+        .object({
+          name: z.string().min(1).optional(),
+          contact: z.string().optional(),
+          address: z.string().optional(),
+          city: z.string().optional(),
+          country: z.string().optional(),
+          notes: z.string().optional(),
+          isActive: z.boolean().optional(),
+        })
+        .parse(request.body);
+      const customer = await prisma.customer.update({ where: { id }, data: body });
+      return reply.send(customer);
     },
   );
 }

@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
+import { generateSequentialNumber } from "../../lib/sequentialNumber.js";
 
 interface CreatePOLineInput {
   productId: string;
@@ -9,8 +10,16 @@ interface CreatePOLineInput {
   additionalCosts?: Decimal | number;
 }
 
+export async function generatePoNumber(): Promise<string> {
+  return generateSequentialNumber({
+    prefix: "PO",
+    countExisting: () => prisma.purchaseOrder.count(),
+    exists: async (candidate) => !!(await prisma.purchaseOrder.findUnique({ where: { poNumber: candidate } })),
+  });
+}
+
+/** poNumber is always assigned automatically — never typed by hand. */
 export async function createPurchaseOrder(params: {
-  poNumber: string;
   supplierId: string;
   currencyId: string;
   expectedReceiptDate?: Date;
@@ -18,9 +27,10 @@ export async function createPurchaseOrder(params: {
   notes?: string;
   lines: CreatePOLineInput[];
 }) {
+  const poNumber = await generatePoNumber();
   return prisma.purchaseOrder.create({
     data: {
-      poNumber: params.poNumber,
+      poNumber,
       supplierId: params.supplierId,
       currencyId: params.currencyId,
       expectedReceiptDate: params.expectedReceiptDate,

@@ -1,7 +1,16 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
-import { amendGradeRequirement, confirmOrder, createDraftOrder } from "./salesOrderService.js";
+import {
+  amendGradeRequirement,
+  confirmOrder,
+  createDraftOrder,
+  computeOrderCostSummary,
+  getOrderPaymentSummary,
+  updateOrder,
+  updateOrderLine,
+  updateOrderStatus,
+} from "./salesOrderService.js";
 import { reserveStock, releaseReservation, suggestAllocation } from "./reservationService.js";
 import { pickFromReservation } from "./pickingService.js";
 import { computeLineProfitability } from "./profitabilityService.js";
@@ -12,11 +21,14 @@ import { createRefund, markRefundPaid } from "./refundService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createOrderSchema = z.object({
-  orderNumber: z.string().min(1),
   channelId: z.string().uuid(),
+  externalOrderId: z.string().optional(),
   customerId: z.string().uuid(),
   currencyId: z.string().uuid(),
   salespersonUserId: z.string().uuid().optional(),
+  shippingPerUnit: z.number().nonnegative().optional(),
+  commissionType: z.enum(["percentage", "fixed"]).optional(),
+  commissionValue: z.number().nonnegative().optional(),
   lines: z
     .array(
       z.object({
@@ -27,9 +39,51 @@ const createOrderSchema = z.object({
         exactGradeQuantities: z.record(z.string(), z.number()).optional(),
         unitPrice: z.number().nonnegative().optional(),
         priceOverrideReason: z.string().optional(),
+        discountType: z.enum(["percentage", "fixed"]).optional(),
+        discountValue: z.number().nonnegative().optional(),
       }),
     )
     .min(1),
+});
+
+const updateOrderSchema = z.object({
+  customerId: z.string().uuid().optional(),
+  channelId: z.string().uuid().optional(),
+  externalOrderId: z.string().optional(),
+  salespersonUserId: z.string().uuid().optional(),
+  notes: z.string().optional(),
+  shippingPerUnit: z.number().nonnegative().optional(),
+  commissionType: z.enum(["percentage", "fixed"]).nullable().optional(),
+  commissionValue: z.number().nonnegative().optional(),
+});
+
+const updateOrderStatusSchema = z.object({
+  qcStatus: z.enum(["pending", "approved", "rejected"]).optional(),
+  paymentStatus: z.enum(["unpaid", "partially_paid", "paid"]).optional(),
+  fulfilmentStatus: z.enum([
+    "unfulfilled",
+    "picking",
+    "packed",
+    "partially_dispatched",
+    "dispatched",
+    "partially_delivered",
+    "delivered",
+    "returned",
+    "cancelled",
+  ]).optional(),
+  paymentReceivedAmount: z.number().nonnegative().optional(),
+  returnedQuantity: z.number().nonnegative().optional(),
+  refundAmount: z.number().nonnegative().optional(),
+  cancellationAmount: z.number().nonnegative().optional(),
+});
+
+const updateOrderLineSchema = z.object({
+  quantity: z.number().positive().optional(),
+  unitPrice: z.number().nonnegative().optional(),
+  discount: z.number().nonnegative().optional(),
+  discountType: z.enum(["percentage", "fixed"]).nullable().optional(),
+  discountValue: z.number().nonnegative().optional(),
+  taxesFees: z.number().nonnegative().optional(),
 });
 
 const suggestAllocationSchema = z.object({
@@ -109,12 +163,14 @@ export async function salesRoutes(app: FastifyInstance) {
   app.get(
     "/sales/orders",
     { preHandler: requirePermission("order.create") },
-    async () =>
-      prisma.salesOrder.findMany({
+    async () => {
+      const orders = await prisma.salesOrder.findMany({
         include: { customer: true, lines: true },
         orderBy: { createdAt: "desc" },
         take: 200,
-      }),
+      });
+      return orders.map((order) => ({ ...order, costSummary: computeOrderCostSummary(order) }));
+    },
   );
 
   app.get(
@@ -133,7 +189,7 @@ export async function salesRoutes(app: FastifyInstance) {
         },
       });
       if (!order) return reply.code(404).send({ error: "not_found" });
-      return order;
+      return { ...order, costSummary: computeOrderCostSummary(order) };
     },
   );
 
@@ -168,6 +224,52 @@ export async function salesRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const order = await confirmOrder(id);
+      return reply.send(order);
+    },
+  );
+
+  // Editable until payment is received — updateOrder/updateOrderLine both
+  // reject once paymentStatus has left "unpaid".
+  app.patch(
+    "/sales/orders/:id",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = updateOrderSchema.parse(request.body);
+      const order = await updateOrder(id, body);
+      return reply.send({ ...order, costSummary: computeOrderCostSummary(order) });
+    },
+  );
+
+  app.patch(
+    "/sales/order-lines/:id",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = updateOrderLineSchema.parse(request.body);
+      const line = await updateOrderLine(id, body);
+      return reply.send(line);
+    },
+  );
+
+  app.get(
+    "/sales/orders/:id/payment-summary",
+    { preHandler: requirePermission("order.create") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getOrderPaymentSummary(id);
+    },
+  );
+
+  // Manual status labels — always available regardless of payment status,
+  // unlike updateOrder/updateOrderLine above (no transition rules enforced).
+  app.patch(
+    "/sales/orders/:id/status",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = updateOrderStatusSchema.parse(request.body);
+      const order = await updateOrderStatus(id, body);
       return reply.send(order);
     },
   );

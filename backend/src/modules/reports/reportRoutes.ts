@@ -11,6 +11,8 @@ import {
   getStockAging,
   getSupplierBalances,
   getCustomerBalances,
+  getStockLevelsByProduct,
+  getProductStockDetail,
 } from "./reportService.js";
 
 export async function reportRoutes(app: FastifyInstance) {
@@ -31,6 +33,19 @@ export async function reportRoutes(app: FastifyInstance) {
     getPendingRefunds(),
   );
   app.get("/reports/stock-aging", { preHandler: requirePermission("stock.count") }, async () => getStockAging());
+  app.get(
+    "/reports/stock-by-product",
+    { preHandler: requirePermission("stock.count") },
+    async () => getStockLevelsByProduct(),
+  );
+  app.get(
+    "/reports/stock-by-product/:id",
+    { preHandler: requirePermission("stock.count") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getProductStockDetail(id);
+    },
+  );
 
   // Financial dashboard — cost/profit-gated, never visible to a picker.
   app.get(

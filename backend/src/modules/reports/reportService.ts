@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
 import { getAccountBalance } from "../finance/ledgerService.js";
+import { computeOrderCostSummary } from "../sales/salesOrderService.js";
 
 /**
  * Operational dashboard: on-hand/reserved/available by state, across all
@@ -50,6 +51,60 @@ export async function getInventoryValuation() {
 
   const lines = [...byProduct.values()];
   return { lines, totalValue: sumDecimal(lines.map((l) => l.value)) };
+}
+
+/**
+ * Per-product stock levels across all grades/bins/states, for the main
+ * inventory list view. Deliberately excludes unit cost — that stays behind
+ * cost.view (see getInventoryValuation) — so a stock.count-only role (e.g.
+ * a picker) can see quantities without seeing valuation.
+ */
+export async function getStockLevelsByProduct() {
+  const states = await prisma.stockState.findMany({ include: { product: true } });
+  const byProduct = new Map<
+    string,
+    { productId: string; skuCode: string; name: string; onHandQty: Decimal; reservedQty: Decimal; availableQty: Decimal }
+  >();
+
+  for (const s of states) {
+    const key = s.productId;
+    const bucket =
+      byProduct.get(key) ??
+      { productId: key, skuCode: s.product.skuCode, name: s.product.name, onHandQty: new Decimal(0), reservedQty: new Decimal(0), availableQty: new Decimal(0) };
+    bucket.onHandQty = bucket.onHandQty.plus(s.onHandQty);
+    bucket.reservedQty = bucket.reservedQty.plus(s.reservedQty);
+    if (s.state === "saleable") bucket.availableQty = bucket.availableQty.plus(s.onHandQty.minus(s.reservedQty));
+    byProduct.set(key, bucket);
+  }
+
+  return [...byProduct.values()]
+    .filter((b) => b.onHandQty.greaterThan(0))
+    .sort((a, b) => a.skuCode.localeCompare(b.skuCode));
+}
+
+/** Grade/bin/state breakdown for a single product — the inventory detail drill-down. */
+export async function getProductStockDetail(productId: string) {
+  const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
+  const states = await prisma.stockState.findMany({
+    where: { productId },
+    include: { grade: true, bin: true },
+  });
+
+  const rows = states
+    .filter((s) => s.onHandQty.greaterThan(0) || s.reservedQty.greaterThan(0))
+    .map((s) => ({
+      state: s.state,
+      gradeId: s.gradeId,
+      gradeCode: s.grade.code,
+      binId: s.binId,
+      binCode: s.bin.code,
+      costLayerId: s.costLayerId,
+      onHandQty: s.onHandQty,
+      reservedQty: s.reservedQty,
+      availableQty: s.state === "saleable" ? s.onHandQty.minus(s.reservedQty) : null,
+    }));
+
+  return { productId: product.id, skuCode: product.skuCode, name: product.name, rows };
 }
 
 /** Purchase orders with outstanding (ordered - received) quantity on any line. */
@@ -174,10 +229,12 @@ export async function getSupplierBalances() {
 }
 
 /**
- * Per-customer: booked order value (quantity * unitPrice where set — not
- * bundle-allocation-aware, a documented simplification) vs. amount actually
- * received via PaymentAllocation, giving an outstanding balance. Spec
- * section 12: "customer balances".
+ * Per-customer: booked order value — net of each order's discount, shipping,
+ * and commission (what the customer is actually expected to pay, matching
+ * computeOrderCostSummary's netTotal — not bundle-allocation-aware, a
+ * documented simplification) vs. amount actually received via
+ * PaymentAllocation, giving an outstanding balance. Spec section 12:
+ * "customer balances".
  */
 export async function getCustomerBalances() {
   const customers = await prisma.customer.findMany({ where: { isActive: true } });
@@ -192,15 +249,21 @@ export async function getCustomerBalances() {
 
     let bookedValue = new Decimal(0);
     for (const order of orders) {
-      for (const line of order.lines) {
-        if (line.unitPrice) bookedValue = bookedValue.plus(line.unitPrice.times(line.quantity));
-      }
+      bookedValue = bookedValue.plus(computeOrderCostSummary(order).netTotal);
     }
 
+    const ordersNeedingAllocationLookup = orders.filter((o) => o.paymentReceivedAmount === null);
     const allocations = await prisma.paymentAllocation.findMany({
-      where: { orderId: { in: orders.map((o) => o.id) } },
+      where: { orderId: { in: ordersNeedingAllocationLookup.map((o) => o.id) } },
     });
-    const received = sumDecimal(allocations.map((a) => a.amount));
+    let received = new Decimal(0);
+    for (const order of orders) {
+      if (order.paymentReceivedAmount !== null) {
+        received = received.plus(order.paymentReceivedAmount);
+      } else {
+        received = received.plus(sumDecimal(allocations.filter((a) => a.orderId === order.id).map((a) => a.amount)));
+      }
+    }
 
     if (bookedValue.greaterThan(0) || received.greaterThan(0)) {
       results.push({
