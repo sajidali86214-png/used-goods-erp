@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
 
 interface Supplier {
   id: string;
@@ -35,8 +36,8 @@ export function PurchasingPage() {
   const products = useFetch<Product[]>("/products");
 
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showNewPO, setShowNewPO] = useState(false);
-  const [poNumber, setPoNumber] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [productId, setProductId] = useState("");
   const [orderedQty, setOrderedQty] = useState("");
@@ -48,16 +49,15 @@ export function PurchasingPage() {
     e.preventDefault();
     setError(null);
     try {
-      await api.post("/purchasing/orders", {
-        poNumber,
+      const created = await api.post<PurchaseOrder>("/purchasing/orders", {
         supplierId,
         currencyId: selectedSupplier?.defaultCurrencyId,
         lines: [{ productId, orderedQty: Number(orderedQty), unitPrice: Number(unitPrice) }],
       });
       setShowNewPO(false);
-      setPoNumber("");
       setOrderedQty("");
       setUnitPrice("");
+      setSuccessMessage(`Purchase order ${created.poNumber} created.`);
       pos.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create PO");
@@ -92,18 +92,24 @@ export function PurchasingPage() {
         <>
           {has("stock.receive") && (
             <div style={{ marginBottom: 12 }}>
-              <button onClick={() => setShowNewPO((v) => !v)}>{showNewPO ? "Cancel" : "+ New purchase order"}</button>
+              <button
+                onClick={() => {
+                  setShowNewPO((v) => !v);
+                  setSuccessMessage(null);
+                }}
+              >
+                {showNewPO ? "Cancel" : "+ New purchase order"}
+              </button>
             </div>
           )}
+
+          {successMessage && !showNewPO && <div className="panel success-banner">{successMessage}</div>}
 
           {showNewPO && (
             <form className="panel" onSubmit={handleCreatePO}>
               <h3>New purchase order</h3>
+              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The PO number is assigned automatically once created.</p>
               <div className="form-row">
-                <div className="field">
-                  <label>PO number</label>
-                  <input value={poNumber} onChange={(e) => setPoNumber(e.target.value)} required />
-                </div>
                 <div className="field">
                   <label>Supplier</label>
                   <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required>
@@ -135,7 +141,7 @@ export function PurchasingPage() {
                 </div>
                 <div className="field">
                   <label>Unit price</label>
-                  <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required min={0} />
+                  <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required min={0} step="0.01" />
                 </div>
               </div>
               <button type="submit">Create PO</button>
@@ -199,7 +205,6 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
   const bins = useFetch<Bin[]>("/settings/bins");
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
-  const [grnNumber, setGrnNumber] = useState("");
   const [poId, setPoId] = useState("");
   const [poLineId, setPoLineId] = useState("");
   const [productId, setProductId] = useState("");
@@ -207,6 +212,7 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
   const [binId, setBinId] = useState("");
   const [currencyId, setCurrencyId] = useState("");
   const [sourceUnitPrice, setSourceUnitPrice] = useState("");
+  const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -230,8 +236,7 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
     setSubmitting(true);
     try {
       const supplierId = selectedPo?.supplier.id;
-      const grn = await api.post<{ lines: { id: string }[] }>("/purchasing/grns", {
-        grnNumber,
+      const grn = await api.post<{ grnNumber: string; lines: { id: string }[] }>("/purchasing/grns", {
         supplierId,
         receiptDate: new Date().toISOString(),
         lines: [{ poLineId: poLineId || undefined, productId, receivedQty: Number(receivedQty) }],
@@ -247,13 +252,20 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
         exchangeRate: 1,
         quantity: Number(receivedQty),
         binId,
-        lotCode: grnNumber,
+        lotCode: grn.grnNumber,
       });
 
-      setSuccess(`Received into inventory as lot ${result.lot.lotCode} — currently Ungraded/Inspection. Grade it from the lot's detail view.`);
-      setGrnNumber("");
+      for (const photo of photos) {
+        await api.post(`/products/${productId}/photos`, { mediaAssetId: photo.id });
+      }
+
+      setSuccess(
+        `Recorded as GRN ${grn.grnNumber}, received into inventory as lot ${result.lot.lotCode} — currently Ungraded/Inspection. Grade it from the lot's detail view.` +
+          (photos.length > 0 ? ` ${photos.length} photo(s) attached to the product.` : ""),
+      );
       setReceivedQty("");
       setSourceUnitPrice("");
+      setPhotos([]);
       onReceived();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not record receipt");
@@ -267,11 +279,8 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
       <h3>Record a goods receipt (GRN)</h3>
       {error && <div className="error-banner">{error}</div>}
       {success && <div className="success-banner">{success}</div>}
+      <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The GRN number is assigned automatically once recorded.</p>
       <div className="form-row">
-        <div className="field">
-          <label>GRN number</label>
-          <input value={grnNumber} onChange={(e) => setGrnNumber(e.target.value)} required />
-        </div>
         <div className="field">
           <label>Against PO (optional)</label>
           <select
@@ -345,8 +354,13 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
         </div>
         <div className="field">
           <label>Unit price</label>
-          <input type="number" value={sourceUnitPrice} onChange={(e) => setSourceUnitPrice(e.target.value)} required min={0} />
+          <input type="number" value={sourceUnitPrice} onChange={(e) => setSourceUnitPrice(e.target.value)} required min={0} step="0.01" />
         </div>
+      </div>
+      <div className="field">
+        <label>Photos (optional — condition/listing photos for this product)</label>
+        <PhotoCapture kind="product" onUploaded={(p) => setPhotos((prev) => [...prev, p])} />
+        <PhotoThumbnails photos={photos} onRemove={(id) => setPhotos((prev) => prev.filter((p) => p.id !== id))} />
       </div>
       <button type="submit" disabled={submitting}>
         {submitting ? "Recording..." : "Record receipt"}

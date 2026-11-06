@@ -478,7 +478,7 @@ function RefundPanel({
       <form onSubmit={handleCreate} className="form-row" style={{ alignItems: "flex-end" }}>
         <div className="field">
           <label>Amount</label>
-          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} />
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} step="0.01" />
         </div>
         <div className="field">
           <label>Currency</label>

@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3000";
+// Falls back to whatever host the page itself was loaded from (not a
+// hardcoded "localhost") so the same build works from a phone on the LAN
+// (e.g. http://192.168.1.39:5173) without needing a per-device .env value.
+const API_URL = import.meta.env.VITE_API_URL ?? `http://${window.location.hostname}:3000`;
 const TOKEN_KEY = "erp_token";
 
 export function getToken(): string | null {
@@ -45,8 +48,28 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+async function uploadFile<T>(path: string, file: File | Blob, fields: Record<string, string> = {}): Promise<T> {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.append(key, value);
+  form.append("file", file, file instanceof File ? file.name : "photo.jpg");
+
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  // No Content-Type here — the browser sets multipart/form-data with the
+  // correct boundary itself; setting it manually breaks the boundary.
+
+  const res = await fetch(`${API_URL}${path}`, { method: "POST", headers, body: form });
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : undefined;
+  if (!res.ok) throw new ApiError(res.status, data);
+  return data as T;
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
+  delete: <T>(path: string) => request<T>("DELETE", path),
+  uploadFile,
 };

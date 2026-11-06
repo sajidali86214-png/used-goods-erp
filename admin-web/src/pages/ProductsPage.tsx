@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, Fragment } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
+import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
 
 interface Product {
   id: string;
@@ -33,6 +34,7 @@ export function ProductsPage() {
   const categories = useFetch<Category[]>("/settings/categories");
   const brands = useFetch<Brand[]>("/settings/brands");
 
+  const [expandedPhotosFor, setExpandedPhotosFor] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState("");
@@ -115,7 +117,7 @@ export function ProductsPage() {
             </div>
             <div className="field">
               <label>Minimum price (optional)</label>
-              <input type="number" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} min={0} />
+              <input type="number" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} min={0} step="0.01" />
             </div>
           </div>
           <button type="submit" disabled={submitting}>
@@ -145,25 +147,83 @@ export function ProductsPage() {
                 <th>Brand</th>
                 <th>Min price</th>
                 <th>Status</th>
+                <th>Photos</th>
               </tr>
             </thead>
             <tbody>
               {products.data.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.skuCode}</td>
-                  <td>{p.name}</td>
-                  <td>{p.category?.name ?? "—"}</td>
-                  <td>{p.brand?.name ?? "—"}</td>
-                  <td>{p.minPrice ?? "—"}</td>
-                  <td>
-                    <span className="badge">{p.isActive ? "active" : "archived"}</span>
-                  </td>
-                </tr>
+                <Fragment key={p.id}>
+                  <tr>
+                    <td>{p.skuCode}</td>
+                    <td>{p.name}</td>
+                    <td>{p.category?.name ?? "—"}</td>
+                    <td>{p.brand?.name ?? "—"}</td>
+                    <td>{p.minPrice ?? "—"}</td>
+                    <td>
+                      <span className="badge">{p.isActive ? "active" : "archived"}</span>
+                    </td>
+                    <td>
+                      <button className="secondary" onClick={() => setExpandedPhotosFor((cur) => (cur === p.id ? null : p.id))}>
+                        {expandedPhotosFor === p.id ? "Hide" : "Photos"}
+                      </button>
+                    </td>
+                  </tr>
+                  {expandedPhotosFor === p.id && (
+                    <tr>
+                      <td colSpan={7}>
+                        <ProductPhotoGallery productId={p.id} />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
             </table>
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface ProductPhotoRecord {
+  id: string;
+  media: { storageKey: string };
+}
+
+function ProductPhotoGallery({ productId }: { productId: string }) {
+  const photos = useFetch<ProductPhotoRecord[]>(`/products/${productId}/photos`, [productId]);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleUploaded(photo: UploadedPhoto) {
+    setError(null);
+    try {
+      await api.post(`/products/${productId}/photos`, { mediaAssetId: photo.id });
+      photos.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not attach photo");
+    }
+  }
+
+  async function handleRemove(photoId: string) {
+    setError(null);
+    try {
+      await api.delete(`/products/${productId}/photos/${photoId}`);
+      photos.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not remove photo");
+    }
+  }
+
+  const thumbnails: UploadedPhoto[] = (photos.data ?? []).map((p) => ({ id: p.id, url: `/media/files/${p.media.storageKey}` }));
+
+  return (
+    <div style={{ padding: "8px 0" }}>
+      {error && <div className="error-banner">{error}</div>}
+      <PhotoThumbnails photos={thumbnails} onRemove={handleRemove} />
+      {thumbnails.length === 0 && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No photos yet.</p>}
+      <div style={{ marginTop: 8 }}>
+        <PhotoCapture kind="product" label="Add photo" onUploaded={handleUploaded} />
       </div>
     </div>
   );
