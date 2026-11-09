@@ -16,7 +16,7 @@ import { masterDataRoutes } from "./modules/masterdata/masterDataRoutes.js";
 import { usersRoutes } from "./modules/users/usersRoutes.js";
 import { auditRoutes } from "./modules/audit/auditRoutes.js";
 import { mediaRoutes, UPLOADS_DIR } from "./modules/media/mediaRoutes.js";
-import { isRemoteStorage } from "./modules/media/storage.js";
+import { isRemoteStorage, registerLocalFileRoute } from "./modules/media/storage.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -29,15 +29,11 @@ export async function buildServer() {
 
   await app.register(multipart);
 
-  // Local-disk static file serving is only needed when uploads aren't going
-  // to remote storage (R2) -- i.e. local dev. @fastify/static is imported
-  // dynamically, only on that path: its content-disposition dependency is
-  // ESM-only, which crashes Vercel's serverless bundler if it's required
-  // unconditionally at module load, even when never actually registered.
+  // Local-disk file serving is only needed when uploads aren't going to
+  // remote storage (R2) -- i.e. local dev.
   if (!isRemoteStorage()) {
-    await mkdir(UPLOADS_DIR, { recursive: true }); // @fastify/static requires `root` to exist at registration time
-    const { default: fastifyStatic } = await import("@fastify/static");
-    await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: "/media/files/", decorateReply: false });
+    await mkdir(UPLOADS_DIR, { recursive: true });
+    registerLocalFileRoute(app);
   }
 
   await app.register(authPlugin);

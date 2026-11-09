@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-import { writeFile, unlink } from "node:fs/promises";
+import { writeFile, unlink, readFile } from "node:fs/promises";
 import path from "node:path";
+import type { FastifyInstance } from "fastify";
 import { env } from "../../config/env.js";
 
 export const UPLOADS_DIR = path.resolve(process.cwd(), "uploads");
@@ -47,4 +48,46 @@ export async function deleteUploadedFile(storageKey: string): Promise<void> {
     return;
   }
   await unlink(path.join(UPLOADS_DIR, storageKey)).catch(() => {});
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".heic": "image/heic",
+  ".heif": "image/heif",
+};
+
+/**
+ * Local-dev-only file serving for /media/files/:key — deliberately NOT
+ * @fastify/static. That package's content-disposition dependency is
+ * ESM-only, and even a dynamic import() of it gets inlined into an eager
+ * require() by Vercel's bundler (esbuild resolves literal-string dynamic
+ * imports at bundle time), crashing the deployed function at startup
+ * whether or not the route is ever registered. This route is only ever
+ * registered when isRemoteStorage() is false, so it's dead code in
+ * production anyway — but staying off that package avoids the bundler
+ * even tracing it.
+ */
+export function registerLocalFileRoute(app: FastifyInstance) {
+  app.get("/media/files/:key", async (request, reply) => {
+    const { key } = request.params as { key: string };
+    // Reject path separators/traversal outright rather than relying only on
+    // the resolved-path containment check below.
+    if (key.includes("/") || key.includes("\\") || key.includes("..")) {
+      return reply.code(400).send({ error: "invalid_key" });
+    }
+    const filePath = path.join(UPLOADS_DIR, key);
+    if (path.dirname(filePath) !== UPLOADS_DIR) {
+      return reply.code(400).send({ error: "invalid_key" });
+    }
+    try {
+      const data = await readFile(filePath);
+      const mimeType = MIME_BY_EXT[path.extname(key).toLowerCase()] ?? "application/octet-stream";
+      return reply.header("Content-Type", mimeType).send(data);
+    } catch {
+      return reply.code(404).send({ error: "not_found" });
+    }
+  });
 }
