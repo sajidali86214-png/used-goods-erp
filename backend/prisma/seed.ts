@@ -38,11 +38,16 @@ async function main() {
     });
   }
 
-  for (const code of ["A", "B", "C", "UNGRADED"]) {
+  const gradeLabels: Record<string, string> = {
+    UNGRADED: "Ungraded / Inspection",
+    AB: "Mixed Grade A/B",
+    ABC: "Mixed Grade A/B/C",
+  };
+  for (const code of ["A", "B", "C", "UNGRADED", "AB", "ABC"]) {
     await prisma.grade.upsert({
       where: { code },
       update: {},
-      create: { code, label: code === "UNGRADED" ? "Ungraded / Inspection" : `Grade ${code}` },
+      create: { code, label: gradeLabels[code] ?? `Grade ${code}` },
     });
   }
 
