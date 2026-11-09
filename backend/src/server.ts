@@ -3,7 +3,6 @@ import { mkdir } from "node:fs/promises";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import fastifyStatic from "@fastify/static";
 import { authPlugin } from "./middleware/auth.js";
 import { idempotencyPlugin } from "./middleware/idempotency.js";
 import { authRoutes } from "./modules/auth/authRoutes.js";
@@ -17,6 +16,7 @@ import { masterDataRoutes } from "./modules/masterdata/masterDataRoutes.js";
 import { usersRoutes } from "./modules/users/usersRoutes.js";
 import { auditRoutes } from "./modules/audit/auditRoutes.js";
 import { mediaRoutes, UPLOADS_DIR } from "./modules/media/mediaRoutes.js";
+import { isRemoteStorage } from "./modules/media/storage.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -27,10 +27,18 @@ export async function buildServer() {
     allowedHeaders: ["Content-Type", "Authorization", "Idempotency-Key"],
   });
 
-  await mkdir(UPLOADS_DIR, { recursive: true }); // @fastify/static requires `root` to exist at registration time
-
   await app.register(multipart);
-  await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: "/media/files/", decorateReply: false });
+
+  // Local-disk static file serving is only needed when uploads aren't going
+  // to remote storage (R2) -- i.e. local dev. @fastify/static is imported
+  // dynamically, only on that path: its content-disposition dependency is
+  // ESM-only, which crashes Vercel's serverless bundler if it's required
+  // unconditionally at module load, even when never actually registered.
+  if (!isRemoteStorage()) {
+    await mkdir(UPLOADS_DIR, { recursive: true }); // @fastify/static requires `root` to exist at registration time
+    const { default: fastifyStatic } = await import("@fastify/static");
+    await app.register(fastifyStatic, { root: UPLOADS_DIR, prefix: "/media/files/", decorateReply: false });
+  }
 
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
