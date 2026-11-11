@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
@@ -87,6 +87,16 @@ interface Channel {
   id: string;
   code: string;
   label: string;
+}
+interface Account {
+  id: string;
+  label: string;
+  currencyId: string;
+  kind: string;
+}
+interface Currency {
+  id: string;
+  code: string;
 }
 
 interface AllocationCandidate {
@@ -266,6 +276,18 @@ export function SalesOrderDetailPage() {
           {o.commissionType && ` − commission ${Number(o.costSummary.commissionAmount).toLocaleString()}`} = net{" "}
           {Number(o.costSummary.netTotal).toLocaleString()}
         </p>
+        {has("finance.payment") && paymentSummary.data && Number(paymentSummary.data.outstanding) > 0 && (
+          <RecordPaymentForm
+            orderId={o.id}
+            customerId={o.customer.id}
+            outstanding={Number(paymentSummary.data.outstanding)}
+            currentPaymentStatus={o.paymentStatus}
+            onRecorded={() => {
+              order.reload();
+              paymentSummary.reload();
+            }}
+          />
+        )}
       </div>
 
       {editing && (
@@ -593,6 +615,95 @@ function OrderStatusPanel({ order, onChanged }: { order: OrderDetail; onChanged:
         {saving ? "Saving..." : "Save status"}
       </button>
     </div>
+  );
+}
+
+function RecordPaymentForm({
+  orderId,
+  outstanding,
+  onRecorded,
+}: {
+  orderId: string;
+  customerId: string;
+  outstanding: number;
+  currentPaymentStatus: string;
+  onRecorded: () => void;
+}) {
+  const accounts = useFetch<Account[]>("/settings/accounts");
+  const [amount, setAmount] = useState(String(outstanding));
+  const [destinationAccountId, setDestinationAccountId] = useState("");
+  const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [bankReference, setBankReference] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setSubmitting(true);
+    try {
+      await api.post(`/sales/orders/${orderId}/record-payment`, {
+        amount: Number(amount),
+        receivedAt: new Date(receivedAt).toISOString(),
+        destinationAccountId,
+        bankReference: bankReference || undefined,
+      });
+      setSuccess("Payment recorded and posted — no need to enter it again in Customer Receipts.");
+      setBankReference("");
+      onRecorded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record payment");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="panel" onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+      <h4 style={{ marginTop: 0 }}>Record a payment</h4>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <div className="form-row">
+        <div className="field">
+          <label>Amount received</label>
+          <input
+            type="number"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            required
+            min={0.01}
+            max={outstanding}
+            step="0.01"
+          />
+        </div>
+        <div className="field">
+          <label>Receiving account</label>
+          <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.data?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label} ({a.kind})
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label>Payment date</label>
+          <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Reference (optional)</label>
+          <input value={bankReference} onChange={(e) => setBankReference(e.target.value)} placeholder="Bank/transaction ref" />
+        </div>
+      </div>
+      <button type="submit" disabled={submitting || !destinationAccountId}>
+        {submitting ? "Recording..." : "Record payment"}
+      </button>
+    </form>
   );
 }
 

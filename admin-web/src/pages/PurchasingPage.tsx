@@ -3,6 +3,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
+import { useDraft } from "../lib/useDraft";
 
 interface Supplier {
   id: string;
@@ -46,6 +47,16 @@ function emptyPOLine(): NewPOLine {
   return { productId: "", gradeId: "", orderedQty: "", unitPrice: "" };
 }
 
+interface NewPODraft {
+  showNewPO: boolean;
+  supplierId: string;
+  lines: NewPOLine[];
+}
+
+function emptyPODraft(): NewPODraft {
+  return { showNewPO: false, supplierId: "", lines: [emptyPOLine()] };
+}
+
 export function PurchasingPage() {
   const { has } = useAuth();
   const [tab, setTab] = useState<"orders" | "receive">("orders");
@@ -56,22 +67,29 @@ export function PurchasingPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [showNewPO, setShowNewPO] = useState(false);
-  const [supplierId, setSupplierId] = useState("");
-  const [lines, setLines] = useState<NewPOLine[]>([emptyPOLine()]);
+  const [draft, setDraft, clearDraft] = useDraft<NewPODraft>("new-po", emptyPODraft());
+  const { showNewPO, supplierId, lines } = draft;
 
   const selectedSupplier = suppliers.data?.find((s) => s.id === supplierId);
 
+  function setShowNewPO(update: boolean | ((prev: boolean) => boolean)) {
+    setDraft((d) => ({ ...d, showNewPO: typeof update === "function" ? update(d.showNewPO) : update }));
+  }
+
+  function setSupplierId(value: string) {
+    setDraft((d) => ({ ...d, supplierId: value }));
+  }
+
   function updateLine(index: number, patch: Partial<NewPOLine>) {
-    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+    setDraft((d) => ({ ...d, lines: d.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
   }
 
   function addLine() {
-    setLines((prev) => [...prev, emptyPOLine()]);
+    setDraft((d) => ({ ...d, lines: [...d.lines, emptyPOLine()] }));
   }
 
   function removeLine(index: number) {
-    setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+    setDraft((d) => ({ ...d, lines: d.lines.length > 1 ? d.lines.filter((_, i) => i !== index) : d.lines }));
   }
 
   async function handleCreatePO(e: FormEvent) {
@@ -88,8 +106,7 @@ export function PurchasingPage() {
           unitPrice: Number(l.unitPrice),
         })),
       });
-      setShowNewPO(false);
-      setLines([emptyPOLine()]);
+      clearDraft();
       setSuccessMessage(`Purchase order ${created.poNumber} created.`);
       pos.reload();
     } catch (err) {
@@ -246,12 +263,15 @@ export function PurchasingPage() {
                       <td>
                         {Array.from(new Set(po.lines.map((l) => l.grade?.code).filter(Boolean))).join(", ") || "—"}
                       </td>
-                      <td>
+                      <td style={{ display: "flex", gap: 6 }}>
                         {po.status === "draft" && has("stock.receive") && (
                           <button className="secondary" onClick={() => handleApprove(po.id)}>
                             Approve
                           </button>
                         )}
+                        <button className="secondary" onClick={() => api.downloadFile(`/purchasing/orders/${po.id}/pdf`, `${po.poNumber}.pdf`)}>
+                          Download PDF
+                        </button>
                       </td>
                     </tr>
                   ))}

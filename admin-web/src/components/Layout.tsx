@@ -16,6 +16,7 @@ const NAV_ITEMS: { to: string; label: string; permission?: string }[] = [
   { to: "/users", label: "Users", permission: "user.manage" },
   { to: "/audit", label: "Audit Log", permission: "audit.view" },
   { to: "/settings", label: "Settings", permission: "settings.manage" },
+  { to: "/investor", label: "Investor Dashboard", permission: "investor.dashboard.view" },
 ];
 
 export function Layout() {
@@ -30,8 +31,20 @@ export function Layout() {
   if (loading) return <div className="main">Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
 
-  const visibleItems = NAV_ITEMS.filter((item) => !item.permission || has(item.permission));
+  // A restricted investor login sees only their own dashboard — nothing
+  // else in the app, regardless of what other (unlisted) permissions a
+  // plain "investor" role might ever pick up later.
+  const isInvestorOnly = user.roles.length === 1 && user.roles[0] === "investor";
+  const visibleItems = isInvestorOnly
+    ? NAV_ITEMS.filter((item) => item.to === "/investor")
+    : NAV_ITEMS.filter((item) => !item.permission || has(item.permission));
   const currentTitle = visibleItems.find((item) => (item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)))?.label ?? "Used Goods ERP";
+
+  // Belt-and-braces: even a direct URL (not just the hidden nav links) sends
+  // an investor-only login back to their own dashboard.
+  if (isInvestorOnly && location.pathname !== "/investor") {
+    return <Navigate to="/investor" replace />;
+  }
 
   return (
     <div className="app-shell">

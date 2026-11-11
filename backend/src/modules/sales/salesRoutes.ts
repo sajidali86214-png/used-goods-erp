@@ -18,6 +18,7 @@ import { dispatchPickAllocation } from "./dispatchService.js";
 import { cancelReservedOrPickedQuantity } from "./cancellationService.js";
 import { createReturnRequest, receiveReturnLine, inspectReturnLine } from "./returnService.js";
 import { createRefund, markRefundPaid } from "./refundService.js";
+import { recordSalesOrderPayment } from "../finance/paymentService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createOrderSchema = z.object({
@@ -84,6 +85,13 @@ const updateOrderLineSchema = z.object({
   discountType: z.enum(["percentage", "fixed"]).nullable().optional(),
   discountValue: z.number().nonnegative().optional(),
   taxesFees: z.number().nonnegative().optional(),
+});
+
+const recordPaymentSchema = z.object({
+  amount: z.number().positive(),
+  receivedAt: z.coerce.date(),
+  destinationAccountId: z.string().uuid(),
+  bankReference: z.string().optional(),
 });
 
 const suggestAllocationSchema = z.object({
@@ -258,6 +266,27 @@ export async function salesRoutes(app: FastifyInstance) {
     async (request) => {
       const { id } = request.params as { id: string };
       return getOrderPaymentSummary(id);
+    },
+  );
+
+  // One-step payment: creates + posts the customer receipt and syncs the
+  // order's paymentStatus label in a single call — no separate visit to
+  // Customer Receipts needed. Gated on finance.payment alone (not
+  // order.create) since this is squarely a finance action.
+  app.post(
+    "/sales/orders/:id/record-payment",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = recordPaymentSchema.parse(request.body);
+      try {
+        const result = await recordSalesOrderPayment({ orderId: id, ...body });
+        return reply.code(201).send(result);
+      } catch (err) {
+        // An overpayment/duplicate-entry attempt is a client mistake, not a
+        // server fault — surface the real reason instead of a bare 500.
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_record_payment" });
+      }
     },
   );
 

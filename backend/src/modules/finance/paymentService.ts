@@ -1,5 +1,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertNonNegative, sumDecimal } from "../../lib/money.js";
+import { lockExchangeRate } from "./currencyService.js";
+import { postCustomerReceipt } from "./ledgerService.js";
+import { getOrderPaymentSummary, updateOrderStatus } from "../sales/salesOrderService.js";
 
 interface AllocationInput {
   orderId: string;
@@ -80,4 +83,64 @@ export async function convertCurrency(params: {
 export async function totalReceivedForOrder(orderId: string): Promise<Decimal> {
   const allocations = await prisma.paymentAllocation.findMany({ where: { orderId } });
   return sumDecimal(allocations.map((a) => a.amount));
+}
+
+/**
+ * One-step "record a sales order payment": creates the customer receipt,
+ * posts it to the ledger, and syncs the order's paymentStatus label — all
+ * in a single call, so recording a payment here never needs a second visit
+ * to Customer Receipts. Only ever posts in PKR (same constraint as every
+ * other ledger posting in this system); rejects an amount that would
+ * overpay the order, which also rules out an accidental duplicate entry.
+ */
+export async function recordSalesOrderPayment(params: {
+  orderId: string;
+  amount: Decimal | number;
+  receivedAt: Date;
+  destinationAccountId: string;
+  bankReference?: string;
+}) {
+  const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: params.orderId } });
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+
+  const amount = new Decimal(params.amount);
+  const before = await getOrderPaymentSummary(params.orderId);
+  if (amount.greaterThan(before.outstanding)) {
+    throw new Error(
+      `Amount ${amount.toString()} exceeds the outstanding balance of ${before.outstanding.toString()} — nothing was recorded.`,
+    );
+  }
+
+  const rate = await lockExchangeRate({
+    fromCurrencyId: pkr.id,
+    toCurrencyId: pkr.id,
+    rate: 1,
+    source: "sales order payment popup",
+  });
+
+  const receipt = await recordCustomerReceipt({
+    customerId: order.customerId,
+    currencyId: pkr.id,
+    amount,
+    receivedAt: params.receivedAt,
+    destinationAccountId: params.destinationAccountId,
+    bankReference: params.bankReference,
+    exchangeRateSnapshotId: rate.id,
+    allocations: [{ orderId: params.orderId, amount }],
+  });
+
+  await postCustomerReceipt(receipt.id);
+
+  const after = await getOrderPaymentSummary(params.orderId);
+  const newPaymentStatus = after.outstanding.lessThanOrEqualTo(0)
+    ? "paid"
+    : after.amountReceived.greaterThan(0)
+      ? "partially_paid"
+      : "unpaid";
+  let order2 = order;
+  if (newPaymentStatus !== order.paymentStatus) {
+    order2 = await updateOrderStatus(params.orderId, { paymentStatus: newPaymentStatus });
+  }
+
+  return { receipt, paymentSummary: after, order: order2 };
 }

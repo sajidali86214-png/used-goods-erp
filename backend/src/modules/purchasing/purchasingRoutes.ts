@@ -9,6 +9,7 @@ import {
   matchInvoiceToAdvance,
 } from "./purchaseOrderService.js";
 import { createGRN } from "./grnService.js";
+import { renderPurchaseOrderPdf } from "./poDocumentService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
@@ -82,7 +83,10 @@ export async function purchasingRoutes(app: FastifyInstance) {
     { preHandler: requirePermission("stock.receive") },
     async (request, reply) => {
       const { id } = request.params as { id: string };
-      const po = await prisma.purchaseOrder.findUnique({ where: { id }, include: { supplier: true, lines: { include: { product: true } } } });
+      const po = await prisma.purchaseOrder.findUnique({
+        where: { id },
+        include: { supplier: true, lines: { include: { product: true, grade: true } } },
+      });
       if (!po) return reply.code(404).send({ error: "not_found" });
       return po;
     },
@@ -101,6 +105,21 @@ export async function purchasingRoutes(app: FastifyInstance) {
       const body = createPOSchema.parse(request.body);
       const po = await createPurchaseOrder(body);
       return reply.code(201).send(po);
+    },
+  );
+
+  app.get(
+    "/purchasing/orders/:id/pdf",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const po = await prisma.purchaseOrder.findUnique({ where: { id } });
+      if (!po) return reply.code(404).send({ error: "not_found" });
+      const pdf = await renderPurchaseOrderPdf(id);
+      return reply
+        .header("Content-Type", "application/pdf")
+        .header("Content-Disposition", `attachment; filename="${po.poNumber}.pdf"`)
+        .send(pdf);
     },
   );
 

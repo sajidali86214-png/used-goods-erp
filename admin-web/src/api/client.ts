@@ -66,10 +66,34 @@ async function uploadFile<T>(path: string, file: File | Blob, fields: Record<str
   return data as T;
 }
 
+/** Fetches a binary response (e.g. a generated PDF) and triggers a browser download — auth needs the Bearer header, so a plain <a href> to the API can't be used directly. */
+async function downloadFile(path: string, filename: string): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(`${API_URL}${path}`, { headers });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new ApiError(res.status, text ? JSON.parse(text) : undefined);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   get: <T>(path: string) => request<T>("GET", path),
   post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
   patch: <T>(path: string, body?: unknown) => request<T>("PATCH", path, body),
+  put: <T>(path: string, body?: unknown) => request<T>("PUT", path, body),
   delete: <T>(path: string) => request<T>("DELETE", path),
   uploadFile,
+  downloadFile,
 };

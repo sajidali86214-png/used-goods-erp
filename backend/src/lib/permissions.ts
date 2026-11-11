@@ -30,6 +30,7 @@ export const PERMISSIONS = [
   "user.manage",
   "settings.manage",
   "audit.view",
+  "investor.dashboard.view",
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number];
@@ -60,6 +61,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionCode[]> = {
     "export.data",
     "settings.manage",
     "audit.view",
+    "investor.dashboard.view",
   ],
   receiving: ["stock.receive", "stock.grade", "stock.transfer", "stock.count", "return.process"],
   picker: ["stock.count", "order.pick", "order.dispatch"],
@@ -77,4 +79,6 @@ export const ROLE_PERMISSIONS: Record<string, PermissionCode[]> = {
     "export.data",
   ],
   viewer: [], // read-only grants are explicit, per-report — none by default
+  // Restricted portal login: sees only the Investor Dashboard, nothing else in the app.
+  investor: ["investor.dashboard.view"],
 };

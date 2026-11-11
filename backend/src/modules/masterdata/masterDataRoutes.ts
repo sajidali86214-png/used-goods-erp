@@ -395,4 +395,28 @@ export async function masterDataRoutes(app: FastifyInstance) {
       return reply.send(customer);
     },
   );
+
+  // ---- App-wide config (singleton key/value) ----
+  // Currently just the letterhead image for PDF documents; read is
+  // unrestricted (the PDF generator itself gates on stock.receive) so any
+  // authenticated screen can show "letterhead set" without extra plumbing.
+  app.get("/settings/app/:key", async (request, reply) => {
+    const { key } = request.params as { key: string };
+    const row = await prisma.appSetting.findUnique({ where: { key } });
+    if (!row) return reply.code(404).send({ error: "not_found" });
+    return row;
+  });
+  app.put(
+    "/settings/app/:key",
+    { preHandler: requirePermission("settings.manage") },
+    async (request) => {
+      const { key } = request.params as { key: string };
+      const body = z.object({ value: z.string() }).parse(request.body);
+      return prisma.appSetting.upsert({
+        where: { key },
+        update: { value: body.value },
+        create: { key, value: body.value },
+      });
+    },
+  );
 }

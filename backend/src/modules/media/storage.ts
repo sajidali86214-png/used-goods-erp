@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
 import { writeFile, unlink, readFile } from "node:fs/promises";
 import path from "node:path";
 import type { FastifyInstance } from "fastify";
@@ -40,6 +40,16 @@ export async function saveUploadedFile(storageKey: string, body: Buffer, mimeTyp
     await writeFile(path.join(UPLOADS_DIR, storageKey), body);
   }
   return mediaUrl(storageKey);
+}
+
+/** Reads a stored file's raw bytes back, from R2 or local disk depending on how it was saved. */
+export async function readStoredFile(storageKey: string): Promise<Buffer> {
+  if (s3) {
+    const result = await s3.send(new GetObjectCommand({ Bucket: env.R2_BUCKET!, Key: storageKey }));
+    const bytes = await result.Body!.transformToByteArray();
+    return Buffer.from(bytes);
+  }
+  return readFile(path.join(UPLOADS_DIR, storageKey));
 }
 
 export async function deleteUploadedFile(storageKey: string): Promise<void> {

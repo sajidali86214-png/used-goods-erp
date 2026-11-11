@@ -1,8 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useState, type ChangeEvent, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 
-type Tab = "categories" | "brands" | "grades" | "bins" | "channels" | "accounts" | "periods";
+type Tab = "categories" | "brands" | "grades" | "bins" | "channels" | "accounts" | "periods" | "documents" | "investors";
 
 export function SettingsPage() {
   const [tab, setTab] = useState<Tab>("categories");
@@ -11,7 +11,7 @@ export function SettingsPage() {
     <div>
       <h1>Settings</h1>
       <div className="tabs">
-        {(["categories", "brands", "grades", "bins", "channels", "accounts", "periods"] as Tab[]).map((t) => (
+        {(["categories", "brands", "grades", "bins", "channels", "accounts", "periods", "documents", "investors"] as Tab[]).map((t) => (
           <button key={t} className={tab === t ? "active" : ""} onClick={() => setTab(t)}>
             {t}
           </button>
@@ -24,6 +24,8 @@ export function SettingsPage() {
       {tab === "channels" && <SimpleList path="/settings/channels" fields={[{ key: "code", label: "Code" }, { key: "label", label: "Label" }]} />}
       {tab === "accounts" && <AccountsTab />}
       {tab === "periods" && <PeriodsTab />}
+      {tab === "documents" && <DocumentsTab />}
+      {tab === "investors" && <InvestorsTab />}
     </div>
   );
 }
@@ -310,5 +312,148 @@ function ReopenPeriodForm() {
       {error && <div className="error-banner" style={{ width: "100%" }}>{error}</div>}
       {success && <div className="success-banner" style={{ width: "100%" }}>{success}</div>}
     </form>
+  );
+}
+
+function DocumentsTab() {
+  const letterhead = useFetch<{ key: string; value: string }>("/settings/app/letterhead_storage_key");
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  async function handleFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const uploaded = await api.uploadFile<{ id: string; url: string; storageKey: string }>("/media", file, { kind: "letterhead" });
+      await api.put("/settings/app/letterhead_storage_key", { value: uploaded.storageKey });
+      setSuccess("Letterhead uploaded — it'll now appear at the top of every PO PDF.");
+      letterhead.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not upload letterhead");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Letterhead</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Upload your company letterhead image (logo/header) once — it's then embedded at the top of every downloaded purchase-order PDF.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <p>
+        Status: <span className="badge">{letterhead.data ? "uploaded" : "not set — PDFs use a placeholder header"}</span>
+      </p>
+      <div className="field" style={{ maxWidth: 320 }}>
+        <label>{letterhead.data ? "Replace letterhead image" : "Upload letterhead image"}</label>
+        <input type="file" accept="image/png,image/jpeg,image/webp" onChange={handleFile} disabled={uploading} />
+      </div>
+    </div>
+  );
+}
+
+interface UserOption {
+  id: string;
+  name: string;
+  email: string;
+}
+interface InvestorRow {
+  id: string;
+  name: string;
+  profitSharePercent: string;
+  isActive: boolean;
+  user: UserOption | null;
+}
+
+function InvestorsTab() {
+  const investors = useFetch<InvestorRow[]>("/investors");
+  const users = useFetch<UserOption[]>("/users");
+  const [name, setName] = useState("");
+  const [profitSharePercent, setProfitSharePercent] = useState("");
+  const [userId, setUserId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    try {
+      await api.post("/investors", {
+        name,
+        profitSharePercent: Number(profitSharePercent),
+        userId: userId || undefined,
+      });
+      setName("");
+      setProfitSharePercent("");
+      setUserId("");
+      investors.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not create investor");
+    }
+  }
+
+  return (
+    <div className="panel">
+      <h3>Investors</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Each investor here with a login attached sees only their own Investor Dashboard (profit share, inventory value, expenses) — nothing else in the
+        app. Create their login first on the Users page with the "investor" role, then link it here.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <form onSubmit={handleCreate} className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field">
+          <label>Investor name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Profit share %</label>
+          <input type="number" min={0} max={100} step="0.01" value={profitSharePercent} onChange={(e) => setProfitSharePercent(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Linked login (optional)</label>
+          <select value={userId} onChange={(e) => setUserId(e.target.value)}>
+            <option value="">No login yet</option>
+            {users.data?.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name} ({u.email})
+              </option>
+            ))}
+          </select>
+        </div>
+        <button type="submit" style={{ height: 36 }}>
+          Add investor
+        </button>
+      </form>
+      {investors.data && (
+        <table style={{ marginTop: 12 }}>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Share %</th>
+              <th>Login</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {investors.data.map((inv) => (
+              <tr key={inv.id}>
+                <td>{inv.name}</td>
+                <td>{Number(inv.profitSharePercent)}%</td>
+                <td>{inv.user ? `${inv.user.name} (${inv.user.email})` : "— not linked —"}</td>
+                <td>
+                  <span className="badge">{inv.isActive ? "active" : "inactive"}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }

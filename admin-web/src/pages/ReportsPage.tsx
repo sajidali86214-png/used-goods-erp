@@ -1,5 +1,6 @@
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
+import { downloadCsv, toCsv } from "../lib/csv";
 
 interface InventoryLine {
   productId: string;
@@ -58,13 +59,51 @@ export function ReportsPage() {
   );
   const customerBalances = useFetch<CustomerBalanceLine[]>(has("profit.view") ? "/reports/customer-balances" : null);
 
+  function downloadFinancialSummary() {
+    if (!financial.data) return;
+    const f = financial.data;
+    const csv = toCsv(
+      [
+        { label: "Gross sales", value: f.grossSales },
+        { label: "Net sales", value: f.netSales },
+        { label: "Cost of goods sold", value: f.cogs },
+        { label: "Gross profit", value: f.grossProfit },
+        { label: "Operating expenses", value: f.operatingExpenses },
+        { label: "Operating result", value: f.operatingResult },
+        { label: "Receivables outstanding", value: f.receivables },
+        { label: "Supplier advances outstanding", value: f.supplierAdvancesOutstanding },
+        { label: "Unsold inventory value", value: f.unsoldInventoryValue },
+      ],
+      [
+        { header: "Line", value: (r) => r.label },
+        { header: "Amount (PKR)", value: (r) => r.value },
+      ],
+    );
+    downloadCsv(`financial-summary-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  }
+
+  function downloadInventoryValuation() {
+    if (!valuation.data) return;
+    const csv = toCsv(valuation.data.lines, [
+      { header: "SKU", value: (l) => l.skuCode },
+      { header: "Remaining qty", value: (l) => l.quantityRemaining },
+      { header: "Value (PKR)", value: (l) => l.value },
+    ]);
+    downloadCsv(`inventory-valuation-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  }
+
   return (
     <div>
       <h1>Reports</h1>
 
       {financial.data && (
         <div className="panel">
-          <h3>Financial summary (all time, PKR)</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Financial summary (all time, PKR)</h3>
+            <button className="secondary" onClick={downloadFinancialSummary}>
+              Download CSV
+            </button>
+          </div>
           <table>
             <tbody>
               <tr><td>Gross sales</td><td>{fmt(financial.data.grossSales)}</td></tr>
@@ -83,7 +122,12 @@ export function ReportsPage() {
 
       {valuation.data && (
         <div className="panel">
-          <h3>Inventory valuation by product</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>Inventory valuation by product</h3>
+            <button className="secondary" onClick={downloadInventoryValuation}>
+              Download CSV
+            </button>
+          </div>
           <p>Total: {fmt(valuation.data.totalValue)} PKR</p>
           <table>
             <thead>

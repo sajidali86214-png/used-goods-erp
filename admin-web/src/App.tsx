@@ -17,6 +17,7 @@ import { ImportsPage } from "./pages/ImportsPage";
 import { UsersPage } from "./pages/UsersPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { InvestorDashboardPage } from "./pages/InvestorDashboardPage";
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
             <Route path="users" element={<UsersPage />} />
             <Route path="audit" element={<AuditLogPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="investor" element={<InvestorDashboardPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

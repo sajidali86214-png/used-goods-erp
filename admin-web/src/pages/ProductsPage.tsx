@@ -4,6 +4,8 @@ import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
+import { useDraft } from "../lib/useDraft";
+import { downloadCsv, toCsv } from "../lib/csv";
 
 interface Product {
   id: string;
@@ -26,6 +28,18 @@ interface Brand {
   name: string;
 }
 
+interface NewProductDraft {
+  showForm: boolean;
+  name: string;
+  categoryId: string;
+  brandId: string;
+  minPrice: string;
+}
+
+function emptyProductDraft(): NewProductDraft {
+  return { showForm: false, name: "", categoryId: "", brandId: "", minPrice: "" };
+}
+
 export function ProductsPage() {
   const { has } = useAuth();
   const [search, setSearch] = useState("");
@@ -35,14 +49,27 @@ export function ProductsPage() {
   const brands = useFetch<Brand[]>("/settings/brands");
 
   const [expandedPhotosFor, setExpandedPhotosFor] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState("");
-  const [brandId, setBrandId] = useState("");
-  const [minPrice, setMinPrice] = useState("");
+  const [draft, setDraft, clearDraft] = useDraft<NewProductDraft>("new-product", emptyProductDraft());
+  const { showForm, name, categoryId, brandId, minPrice } = draft;
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  function setShowForm(update: boolean | ((prev: boolean) => boolean)) {
+    setDraft((d) => ({ ...d, showForm: typeof update === "function" ? update(d.showForm) : update }));
+  }
+  function setName(value: string) {
+    setDraft((d) => ({ ...d, name: value }));
+  }
+  function setCategoryId(value: string) {
+    setDraft((d) => ({ ...d, categoryId: value }));
+  }
+  function setBrandId(value: string) {
+    setDraft((d) => ({ ...d, brandId: value }));
+  }
+  function setMinPrice(value: string) {
+    setDraft((d) => ({ ...d, minPrice: value }));
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -58,9 +85,7 @@ export function ProductsPage() {
         minPrice: minPrice ? Number(minPrice) : undefined,
       });
       setSuccess(`Created "${created.name}" with SKU ${created.skuCode}.`);
-      setName("");
-      setBrandId("");
-      setMinPrice("");
+      clearDraft();
       products.reload();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not create product");
@@ -69,13 +94,31 @@ export function ProductsPage() {
     }
   }
 
+  function handleDownloadCsv() {
+    const rows = products.data ?? [];
+    const csv = toCsv(rows, [
+      { header: "SKU", value: (p) => p.skuCode },
+      { header: "Name", value: (p) => p.name },
+      { header: "Category", value: (p) => p.category?.name ?? "" },
+      { header: "Brand", value: (p) => p.brand?.name ?? "" },
+      { header: "Min price", value: (p) => p.minPrice ?? "" },
+      { header: "Status", value: (p) => (p.isActive ? "active" : "archived") },
+    ]);
+    downloadCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  }
+
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h1>Products</h1>
-        {has("settings.manage") && (
-          <button onClick={() => setShowForm((v) => !v)}>{showForm ? "Cancel" : "+ Add product"}</button>
-        )}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="secondary" onClick={handleDownloadCsv} disabled={!products.data?.length}>
+            Download CSV
+          </button>
+          {has("settings.manage") && (
+            <button onClick={() => setShowForm((v) => !v)}>{showForm ? "Cancel" : "+ Add product"}</button>
+          )}
+        </div>
       </div>
 
       {showForm && (

@@ -293,6 +293,46 @@ async function sumEntriesForAccountCode(code: string, params: { from?: Date; to?
 }
 
 /**
+ * Posted operating expenses for a period, grouped by category — e.g.
+ * salaries, commuting, fuel. Reads only posted ledger entries (Expense rows
+ * that were actually posted via postExpense), same "posted records only"
+ * rule as getFinancialSummary, so draft/unposted expenses never show here.
+ */
+export async function getExpensesByCategory(params: { from?: Date; to?: Date }) {
+  const operatingExpenses = await prisma.account.findUniqueOrThrow({ where: { code: "OPERATING_EXPENSES" } });
+  const entries = await prisma.ledgerEntry.findMany({
+    where: {
+      accountId: operatingExpenses.id,
+      direction: "debit",
+      relatedDocumentType: "Expense",
+      postedAt: { gte: params.from, lte: params.to },
+    },
+  });
+
+  const expenseIds = entries.map((e) => e.relatedDocumentId);
+  const expenses = await prisma.expense.findMany({ where: { id: { in: expenseIds } } });
+  const categoryIds = [...new Set(expenses.map((e) => e.categoryId))];
+  const categories = await prisma.expenseCategory.findMany({ where: { id: { in: categoryIds } } });
+  const labelById = new Map(categories.map((c) => [c.id, c.label]));
+  const amountByExpenseId = new Map(entries.map((e) => [e.relatedDocumentId, e.amount]));
+
+  const byCategory = new Map<string, Decimal>();
+  for (const expense of expenses) {
+    const amount = amountByExpenseId.get(expense.id) ?? expense.amount;
+    byCategory.set(expense.categoryId, (byCategory.get(expense.categoryId) ?? new Decimal(0)).plus(amount));
+  }
+
+  const lines = [...byCategory.entries()].map(([categoryId, total]) => ({
+    categoryId,
+    label: labelById.get(categoryId) ?? "Uncategorized",
+    total,
+  }));
+  lines.sort((a, b) => b.total.minus(a.total).toNumber());
+
+  return { lines, total: sumDecimal(lines.map((l) => l.total)) };
+}
+
+/**
  * Financial dashboard, PKR only (spec section 12) for the given date range:
  * net sales, COGS, gross profit, operating expenses, operating result,
  * receivables, supplier advances outstanding, and unsold inventory value.
