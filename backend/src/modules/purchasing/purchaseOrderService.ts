@@ -4,6 +4,7 @@ import { generateSequentialNumber } from "../../lib/sequentialNumber.js";
 
 interface CreatePOLineInput {
   productId: string;
+  gradeId?: string;
   orderedQty: Decimal | number;
   unitPrice: Decimal | number;
   discount?: Decimal | number;
@@ -40,6 +41,7 @@ export async function createPurchaseOrder(params: {
       lines: {
         create: params.lines.map((l) => ({
           productId: l.productId,
+          gradeId: l.gradeId,
           orderedQty: new Decimal(l.orderedQty),
           unitPrice: new Decimal(l.unitPrice),
           discount: l.discount !== undefined ? new Decimal(l.discount) : undefined,
@@ -109,6 +111,7 @@ export async function getPurchaseOrderStatus(poId: string) {
     lines.push({
       lineId: line.id,
       productId: line.productId,
+      gradeId: line.gradeId,
       orderedQty: line.orderedQty,
       receivedQty,
       rejectedQty,

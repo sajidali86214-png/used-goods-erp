@@ -198,6 +198,8 @@ model Grade {
   pickAllocations      PickAllocation[]
   returnLinesOrigin    ReturnLine[]     @relation("ReturnLineOriginGrade")
   returnLinesInspected ReturnLine[]     @relation("ReturnLineInspectedGrade")
+  purchaseOrderLines   PurchaseOrderLine[]
+  grnLines             GRNLine[]
 }
 
 model Bin {
@@ -299,6 +301,7 @@ model PurchaseOrderLine {
   id              String   @id @default(uuid())
   poId            String
   productId       String
+  gradeId         String? // intended grade mix ordered (e.g. AB, C) — informational until received
   orderedQty      Decimal  @db.Decimal(18, 4)
   unitPrice       Decimal  @db.Decimal(18, 4)
   discount        Decimal? @db.Decimal(18, 4)
@@ -306,6 +309,7 @@ model PurchaseOrderLine {
 
   po       PurchaseOrder @relation(fields: [poId], references: [id])
   product  Product       @relation(fields: [productId], references: [id])
+  grade    Grade?        @relation(fields: [gradeId], references: [id])
   grnLines GRNLine[]
 }
 
@@ -373,6 +377,7 @@ model GRNLine {
   grnId           String
   poLineId        String?
   productId       String
+  gradeId         String? // grade actually received into (e.g. AB, C) — defaults to Ungraded/Inspection when omitted
   receivedQty     Decimal @db.Decimal(18, 4)
   rejectedQty     Decimal @default(0) @db.Decimal(18, 4)
   inspectionNotes String?
@@ -380,6 +385,7 @@ model GRNLine {
   grn     GRN                @relation(fields: [grnId], references: [id])
   poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
   product Product            @relation(fields: [productId], references: [id])
+  grade   Grade?             @relation(fields: [gradeId], references: [id])
   lots    Lot[]
 }
 

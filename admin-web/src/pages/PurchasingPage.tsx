@@ -14,9 +14,16 @@ interface Product {
   skuCode: string;
   name: string;
 }
+interface Grade {
+  id: string;
+  code: string;
+  label: string;
+}
 interface POLine {
   id: string;
   productId: string;
+  gradeId: string | null;
+  grade: Grade | null;
   orderedQty: string;
   unitPrice: string;
 }
@@ -28,22 +35,44 @@ interface PurchaseOrder {
   lines: POLine[];
 }
 
+interface NewPOLine {
+  productId: string;
+  gradeId: string;
+  orderedQty: string;
+  unitPrice: string;
+}
+
+function emptyPOLine(): NewPOLine {
+  return { productId: "", gradeId: "", orderedQty: "", unitPrice: "" };
+}
+
 export function PurchasingPage() {
   const { has } = useAuth();
   const [tab, setTab] = useState<"orders" | "receive">("orders");
   const pos = useFetch<PurchaseOrder[]>("/purchasing/orders");
   const suppliers = useFetch<Supplier[]>("/suppliers");
   const products = useFetch<Product[]>("/products");
+  const grades = useFetch<Grade[]>("/settings/grades");
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [showNewPO, setShowNewPO] = useState(false);
   const [supplierId, setSupplierId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [orderedQty, setOrderedQty] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
+  const [lines, setLines] = useState<NewPOLine[]>([emptyPOLine()]);
 
   const selectedSupplier = suppliers.data?.find((s) => s.id === supplierId);
+
+  function updateLine(index: number, patch: Partial<NewPOLine>) {
+    setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+  }
+
+  function addLine() {
+    setLines((prev) => [...prev, emptyPOLine()]);
+  }
+
+  function removeLine(index: number) {
+    setLines((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== index) : prev));
+  }
 
   async function handleCreatePO(e: FormEvent) {
     e.preventDefault();
@@ -52,11 +81,15 @@ export function PurchasingPage() {
       const created = await api.post<PurchaseOrder>("/purchasing/orders", {
         supplierId,
         currencyId: selectedSupplier?.defaultCurrencyId,
-        lines: [{ productId, orderedQty: Number(orderedQty), unitPrice: Number(unitPrice) }],
+        lines: lines.map((l) => ({
+          productId: l.productId,
+          gradeId: l.gradeId || undefined,
+          orderedQty: Number(l.orderedQty),
+          unitPrice: Number(l.unitPrice),
+        })),
       });
       setShowNewPO(false);
-      setOrderedQty("");
-      setUnitPrice("");
+      setLines([emptyPOLine()]);
       setSuccessMessage(`Purchase order ${created.poNumber} created.`);
       pos.reload();
     } catch (err) {
@@ -122,27 +155,66 @@ export function PurchasingPage() {
                   </select>
                 </div>
               </div>
-              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>First line item (add more lines via the API for now):</p>
-              <div className="form-row">
-                <div className="field">
-                  <label>Product</label>
-                  <select value={productId} onChange={(e) => setProductId(e.target.value)} required>
-                    <option value="">Select...</option>
-                    {products.data?.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.skuCode} — {p.name}
-                      </option>
-                    ))}
-                  </select>
+              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Line items — add a grade mix when you already know what you're ordering (e.g. a supplier's pre-sorted AB or C bale).</p>
+              {lines.map((line, index) => (
+                <div className="form-row" key={index}>
+                  <div className="field">
+                    <label>Product</label>
+                    <select value={line.productId} onChange={(e) => updateLine(index, { productId: e.target.value })} required>
+                      <option value="">Select...</option>
+                      {products.data?.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.skuCode} — {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Grade mix</label>
+                    <select value={line.gradeId} onChange={(e) => updateLine(index, { gradeId: e.target.value })}>
+                      <option value="">Not specified yet</option>
+                      {grades.data?.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.code}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Ordered quantity</label>
+                    <input
+                      type="number"
+                      value={line.orderedQty}
+                      onChange={(e) => updateLine(index, { orderedQty: e.target.value })}
+                      required
+                      min={1}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Unit price</label>
+                    <input
+                      type="number"
+                      value={line.unitPrice}
+                      onChange={(e) => updateLine(index, { unitPrice: e.target.value })}
+                      required
+                      min={0}
+                      step="0.01"
+                    />
+                  </div>
+                  {lines.length > 1 && (
+                    <div className="field" style={{ justifyContent: "flex-end" }}>
+                      <label>&nbsp;</label>
+                      <button type="button" className="secondary" onClick={() => removeLine(index)}>
+                        Remove
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <div className="field">
-                  <label>Ordered quantity</label>
-                  <input type="number" value={orderedQty} onChange={(e) => setOrderedQty(e.target.value)} required min={1} />
-                </div>
-                <div className="field">
-                  <label>Unit price</label>
-                  <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} required min={0} step="0.01" />
-                </div>
+              ))}
+              <div style={{ marginBottom: 12 }}>
+                <button type="button" className="secondary" onClick={addLine}>
+                  + Add line
+                </button>
               </div>
               <button type="submit">Create PO</button>
             </form>
@@ -158,6 +230,7 @@ export function PurchasingPage() {
                     <th>Supplier</th>
                     <th>Status</th>
                     <th>Lines</th>
+                    <th>Grade mix</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -170,6 +243,9 @@ export function PurchasingPage() {
                         <span className="badge">{po.status}</span>
                       </td>
                       <td>{po.lines.length}</td>
+                      <td>
+                        {Array.from(new Set(po.lines.map((l) => l.grade?.code).filter(Boolean))).join(", ") || "—"}
+                      </td>
                       <td>
                         {po.status === "draft" && has("stock.receive") && (
                           <button className="secondary" onClick={() => handleApprove(po.id)}>
@@ -186,7 +262,9 @@ export function PurchasingPage() {
         </>
       )}
 
-      {tab === "receive" && <ReceiveGrnForm pos={pos.data ?? []} products={products.data ?? []} onReceived={pos.reload} />}
+      {tab === "receive" && (
+        <ReceiveGrnForm pos={pos.data ?? []} products={products.data ?? []} grades={grades.data ?? []} onReceived={pos.reload} />
+      )}
     </div>
   );
 }
@@ -201,13 +279,24 @@ interface Currency {
   code: string;
 }
 
-function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; products: Product[]; onReceived: () => void }) {
+function ReceiveGrnForm({
+  pos,
+  products,
+  grades,
+  onReceived,
+}: {
+  pos: PurchaseOrder[];
+  products: Product[];
+  grades: Grade[];
+  onReceived: () => void;
+}) {
   const bins = useFetch<Bin[]>("/settings/bins");
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
   const [poId, setPoId] = useState("");
   const [poLineId, setPoLineId] = useState("");
   const [productId, setProductId] = useState("");
+  const [gradeId, setGradeId] = useState("");
   const [receivedQty, setReceivedQty] = useState("");
   const [binId, setBinId] = useState("");
   const [currencyId, setCurrencyId] = useState("");
@@ -224,6 +313,7 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
     const line = selectedPo?.lines.find((l) => l.id === lineId);
     if (line) {
       setProductId(line.productId);
+      setGradeId(line.gradeId ?? "");
       setSourceUnitPrice(line.unitPrice);
       setCurrencyId(selectedPo!.supplier.defaultCurrencyId);
     }
@@ -239,13 +329,14 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
       const grn = await api.post<{ grnNumber: string; lines: { id: string }[] }>("/purchasing/grns", {
         supplierId,
         receiptDate: new Date().toISOString(),
-        lines: [{ poLineId: poLineId || undefined, productId, receivedQty: Number(receivedQty) }],
+        lines: [{ poLineId: poLineId || undefined, productId, gradeId: gradeId || undefined, receivedQty: Number(receivedQty) }],
       });
 
       // Second step: actually land the receipt in inventory (creates the lot + cost layer).
       const result = await api.post<{ lot: { lotCode: string } }>("/stock/receive", {
         grnLineId: grn.lines[0]!.id,
         productId,
+        gradeId: gradeId || undefined,
         supplierId,
         originalCurrencyId: currencyId,
         sourceUnitPrice: Number(sourceUnitPrice),
@@ -259,12 +350,14 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
         await api.post(`/products/${productId}/photos`, { mediaAssetId: photo.id });
       }
 
+      const gradeLabel = grades.find((g) => g.id === gradeId)?.code;
       setSuccess(
-        `Recorded as GRN ${grn.grnNumber}, received into inventory as lot ${result.lot.lotCode} — currently Ungraded/Inspection. Grade it from the lot's detail view.` +
+        `Recorded as GRN ${grn.grnNumber}, received into inventory as lot ${result.lot.lotCode} — currently ${gradeLabel ?? "Ungraded"}/Inspection. Move it to saleable stock from the lot's detail view.` +
           (photos.length > 0 ? ` ${photos.length} photo(s) attached to the product.` : ""),
       );
       setReceivedQty("");
       setSourceUnitPrice("");
+      setGradeId("");
       setPhotos([]);
       onReceived();
     } catch (err) {
@@ -307,6 +400,7 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
             {selectedPo.lines.map((l) => (
               <option key={l.id} value={l.id}>
                 {products.find((p) => p.id === l.productId)?.skuCode ?? l.productId} — ordered {l.orderedQty}
+                {l.grade ? ` (${l.grade.code})` : ""}
               </option>
             ))}
           </select>
@@ -320,6 +414,17 @@ function ReceiveGrnForm({ pos, products, onReceived }: { pos: PurchaseOrder[]; p
             {products.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.skuCode} — {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Grade received</label>
+          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
+            <option value="">Ungraded (needs inspection)</option>
+            {grades.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.code}
               </option>
             ))}
           </select>

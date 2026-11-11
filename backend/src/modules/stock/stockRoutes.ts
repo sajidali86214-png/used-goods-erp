@@ -9,6 +9,7 @@ import { createStockCount, submitStockCount, approveStockCountVariance } from ".
 const receiveSchema = z.object({
   grnLineId: z.string().uuid().optional(),
   productId: z.string().uuid(),
+  gradeId: z.string().uuid().optional(),
   supplierId: z.string().uuid().optional(),
   originalCurrencyId: z.string().uuid(),
   sourceUnitPrice: z.number().nonnegative(),

@@ -5,6 +5,7 @@ import { generateSequentialNumber } from "../../lib/sequentialNumber.js";
 interface GRNLineInput {
   poLineId?: string;
   productId: string;
+  gradeId?: string;
   receivedQty: Decimal | number;
   rejectedQty?: Decimal | number;
   inspectionNotes?: string;
@@ -63,6 +64,7 @@ export async function createGRN(params: {
         create: params.lines.map((l) => ({
           poLineId: l.poLineId,
           productId: l.productId,
+          gradeId: l.gradeId,
           receivedQty: new Decimal(l.receivedQty),
           rejectedQty: l.rejectedQty !== undefined ? new Decimal(l.rejectedQty) : undefined,
           inspectionNotes: l.inspectionNotes,

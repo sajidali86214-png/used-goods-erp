@@ -21,6 +21,7 @@ const createPOSchema = z.object({
     .array(
       z.object({
         productId: z.string().uuid(),
+        gradeId: z.string().uuid().optional(),
         orderedQty: z.number().positive(),
         unitPrice: z.number().nonnegative(),
         discount: z.number().nonnegative().optional(),
@@ -50,6 +51,7 @@ const createGRNSchema = z.object({
       z.object({
         poLineId: z.string().uuid().optional(),
         productId: z.string().uuid(),
+        gradeId: z.string().uuid().optional(),
         receivedQty: z.number().positive(),
         rejectedQty: z.number().nonnegative().optional(),
         inspectionNotes: z.string().optional(),
@@ -67,7 +69,12 @@ export async function purchasingRoutes(app: FastifyInstance) {
   app.get(
     "/purchasing/orders",
     { preHandler: requirePermission("stock.receive") },
-    async () => prisma.purchaseOrder.findMany({ include: { supplier: true, lines: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+    async () =>
+      prisma.purchaseOrder.findMany({
+        include: { supplier: true, lines: { include: { grade: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 200,
+      }),
   );
 
   app.get(

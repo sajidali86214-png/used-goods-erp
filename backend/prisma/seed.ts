@@ -42,8 +42,10 @@ async function main() {
     UNGRADED: "Ungraded / Inspection",
     AB: "Mixed Grade A/B",
     ABC: "Mixed Grade A/B/C",
+    BC: "Mixed Grade B/C",
+    AC: "Mixed Grade A/C",
   };
-  for (const code of ["A", "B", "C", "UNGRADED", "AB", "ABC"]) {
+  for (const code of ["A", "B", "C", "UNGRADED", "AB", "ABC", "BC", "AC"]) {
     await prisma.grade.upsert({
       where: { code },
       update: {},

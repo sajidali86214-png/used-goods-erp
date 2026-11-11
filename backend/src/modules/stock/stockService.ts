@@ -6,6 +6,7 @@ import { Decimal, sumDecimal, assertEqual, assertNonNegative } from "../../lib/m
 interface ReceiveToInspectionInput {
   grnLineId?: string; // omit for opening-stock lots with no GRN (spec section 3.2)
   productId: string;
+  gradeId?: string; // known grade mix at receipt (e.g. supplier-sorted AB/C bales) — defaults to Ungraded/Inspection
   supplierId?: string;
   originalCurrencyId: string;
   sourceUnitPrice: Decimal | number;
@@ -24,7 +25,9 @@ interface ReceiveToInspectionInput {
  */
 export async function receiveToInspection(input: ReceiveToInspectionInput) {
   return runSerializable(async (tx) => {
-    const ungraded = await tx.grade.findUniqueOrThrow({ where: { code: "UNGRADED" } });
+    const receiptGrade = input.gradeId
+      ? await tx.grade.findUniqueOrThrow({ where: { id: input.gradeId } })
+      : await tx.grade.findUniqueOrThrow({ where: { code: "UNGRADED" } });
 
     const qty = new Decimal(input.quantity);
     const unitPrice = new Decimal(input.sourceUnitPrice);
@@ -58,7 +61,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
     const costLayer = await tx.costLayer.create({
       data: {
         lotId: lot.id,
-        gradeId: ungraded.id,
+        gradeId: receiptGrade.id,
         binId: input.binId,
         quantityOriginal: qty,
         quantityRemaining: qty,
@@ -70,7 +73,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
       data: {
         type: "receive_to_inspection",
         productId: input.productId,
-        gradeId: ungraded.id,
+        gradeId: receiptGrade.id,
         binId: input.binId,
         costLayerId: costLayer.id,
         quantity: qty,
@@ -82,7 +85,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
 
     await upsertStockState(tx, {
       productId: input.productId,
-      gradeId: ungraded.id,
+      gradeId: receiptGrade.id,
       binId: input.binId,
       costLayerId: costLayer.id,
       state: "inspection",
