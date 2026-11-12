@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
@@ -47,6 +48,13 @@ interface PurchaseOrder {
   supplier: Supplier;
   lines: POLine[];
 }
+interface GRNSummary {
+  id: string;
+  grnNumber: string;
+  receiptDate: string;
+  supplier: Supplier;
+  lines: { receivedQty: string }[];
+}
 
 interface NewPOLine {
   productId: string;
@@ -73,6 +81,7 @@ export function PurchasingPage() {
   const { has } = useAuth();
   const [tab, setTab] = useState<"orders" | "receive">("orders");
   const pos = useFetch<PurchaseOrder[]>("/purchasing/orders");
+  const grns = useFetch<GRNSummary[]>("/purchasing/grns");
   const suppliers = useFetch<Supplier[]>("/suppliers");
   const products = useFetch<Product[]>("/products");
   const grades = useFetch<Grade[]>("/settings/grades");
@@ -329,7 +338,9 @@ export function PurchasingPage() {
                 <tbody>
                   {pos.data.map((po) => (
                     <tr key={po.id}>
-                      <td>{po.poNumber}</td>
+                      <td>
+                        <Link to={`/purchasing/${po.id}`}>{po.poNumber}</Link>
+                      </td>
                       <td>{po.supplier.name}</td>
                       <td>
                         <span className="badge">{po.status}</span>
@@ -360,15 +371,50 @@ export function PurchasingPage() {
       )}
 
       {tab === "receive" && (
-        <ReceiveGrnForm
-          pos={pos.data ?? []}
-          products={products.data ?? []}
-          grades={grades.data ?? []}
-          categories={categories.data ?? []}
-          brands={brands.data ?? []}
-          onReceived={pos.reload}
-          onProductCreated={products.reload}
-        />
+        <>
+          <ReceiveGrnForm
+            pos={pos.data ?? []}
+            products={products.data ?? []}
+            grades={grades.data ?? []}
+            categories={categories.data ?? []}
+            brands={brands.data ?? []}
+            onReceived={() => {
+              pos.reload();
+              grns.reload();
+            }}
+            onProductCreated={products.reload}
+          />
+          <div className="panel">
+            <h3>Goods receipts (GRNs)</h3>
+            {grns.data && grns.data.length > 0 && (
+              <table>
+                <thead>
+                  <tr>
+                    <th>GRN #</th>
+                    <th>Supplier</th>
+                    <th>Date</th>
+                    <th>Lines</th>
+                    <th>Pieces</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {grns.data.map((g) => (
+                    <tr key={g.id}>
+                      <td>
+                        <Link to={`/grns/${g.id}`}>{g.grnNumber}</Link>
+                      </td>
+                      <td>{g.supplier.name}</td>
+                      <td>{new Date(g.receiptDate).toLocaleDateString()}</td>
+                      <td>{g.lines.length}</td>
+                      <td>{g.lines.reduce((sum, l) => sum + Number(l.receivedQty), 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {grns.data && grns.data.length === 0 && <p style={{ color: "var(--text-muted)" }}>No goods receipts recorded yet.</p>}
+          </div>
+        </>
       )}
     </div>
   );

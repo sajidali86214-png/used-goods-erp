@@ -7,6 +7,10 @@ import {
   recordSupplierAdvance,
   getPurchaseOrderStatus,
   matchInvoiceToAdvance,
+  updatePurchaseOrder,
+  updatePurchaseOrderLine,
+  amendPurchaseOrderLine,
+  getPurchaseOrderAmendments,
 } from "./purchaseOrderService.js";
 import { createGRN } from "./grnService.js";
 import { renderPurchaseOrderPdf } from "./poDocumentService.js";
@@ -66,6 +70,27 @@ const matchInvoiceSchema = z.object({
   matchedAmount: z.number().positive(),
 });
 
+const updatePOSchema = z.object({
+  expectedReceiptDate: z.coerce.date().optional(),
+  terms: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const updatePOLineSchema = z.object({
+  productId: z.string().uuid().optional(),
+  gradeId: z.string().uuid().nullable().optional(),
+  orderedQty: z.number().positive().optional(),
+  unitPrice: z.number().nonnegative().optional(),
+  discount: z.number().nonnegative().optional(),
+  additionalCosts: z.number().nonnegative().optional(),
+});
+
+const amendPOLineSchema = z.object({
+  orderedQty: z.number().positive().optional(),
+  unitPrice: z.number().nonnegative().optional(),
+  reason: z.string().min(1),
+});
+
 export async function purchasingRoutes(app: FastifyInstance) {
   app.get(
     "/purchasing/orders",
@@ -96,6 +121,30 @@ export async function purchasingRoutes(app: FastifyInstance) {
     "/purchasing/grns",
     { preHandler: requirePermission("stock.receive") },
     async () => prisma.gRN.findMany({ include: { supplier: true, lines: true }, orderBy: { createdAt: "desc" }, take: 200 }),
+  );
+
+  app.get(
+    "/purchasing/grns/:id",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const grn = await prisma.gRN.findUnique({
+        where: { id },
+        include: {
+          supplier: true,
+          lines: {
+            include: {
+              product: true,
+              grade: true,
+              poLine: { include: { po: true } },
+              lots: { include: { costLayers: { include: { grade: true }, where: { quantityRemaining: { gt: 0 } } } } },
+            },
+          },
+        },
+      });
+      if (!grn) return reply.code(404).send({ error: "not_found" });
+      return grn;
+    },
   );
 
   app.post(
@@ -139,6 +188,54 @@ export async function purchasingRoutes(app: FastifyInstance) {
     async (request) => {
       const { id } = request.params as { id: string };
       return getPurchaseOrderStatus(id);
+    },
+  );
+
+  app.patch(
+    "/purchasing/orders/:id",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = updatePOSchema.parse(request.body);
+      try {
+        return await updatePurchaseOrder(id, body);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_update" });
+      }
+    },
+  );
+
+  app.patch(
+    "/purchasing/orders/:poId/lines/:lineId",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { lineId } = request.params as { poId: string; lineId: string };
+      const body = updatePOLineSchema.parse(request.body);
+      try {
+        return await updatePurchaseOrderLine(lineId, body);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_update" });
+      }
+    },
+  );
+
+  app.post(
+    "/purchasing/orders/:poId/lines/:lineId/amend",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { lineId } = request.params as { poId: string; lineId: string };
+      const body = amendPOLineSchema.parse(request.body);
+      const line = await amendPurchaseOrderLine({ lineId, ...body, actorUserId: request.authUser!.id });
+      return reply.send(line);
+    },
+  );
+
+  app.get(
+    "/purchasing/orders/:id/amendments",
+    { preHandler: requirePermission("stock.receive") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getPurchaseOrderAmendments(id);
     },
   );
 

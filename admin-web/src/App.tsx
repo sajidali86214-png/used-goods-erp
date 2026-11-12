@@ -18,6 +18,8 @@ import { UsersPage } from "./pages/UsersPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { InvestorDashboardPage } from "./pages/InvestorDashboardPage";
+import { PurchaseOrderDetailPage } from "./pages/PurchaseOrderDetailPage";
+import { GRNDetailPage } from "./pages/GRNDetailPage";
 
 export default function App() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
             <Route path="inventory" element={<InventoryPage />} />
             <Route path="suppliers" element={<SuppliersPage />} />
             <Route path="purchasing" element={<PurchasingPage />} />
+            <Route path="purchasing/:id" element={<PurchaseOrderDetailPage />} />
+            <Route path="grns/:id" element={<GRNDetailPage />} />
             <Route path="sales" element={<SalesOrdersPage />} />
             <Route path="sales/:id" element={<SalesOrderDetailPage />} />
             <Route path="customers/:id" element={<CustomerDetailPage />} />
