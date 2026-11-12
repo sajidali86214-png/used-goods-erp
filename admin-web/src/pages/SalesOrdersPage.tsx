@@ -71,23 +71,40 @@ type PendingAction =
   | { orderId: string; kind: "return" }
   | { orderId: string; kind: "cancel" };
 
+interface NewOrderLine {
+  productId: string;
+  quantity: string;
+  unitPrice: string;
+  discountType: "none" | "percentage" | "fixed";
+  discountValue: string;
+  gradeRequirementType: "none" | "allowed_set" | "exact_composition";
+  allowedGradeIds: string[];
+  exactQtyByGrade: Record<string, string>;
+}
+
+function emptyOrderLine(): NewOrderLine {
+  return {
+    productId: "",
+    quantity: "",
+    unitPrice: "",
+    discountType: "none",
+    discountValue: "",
+    gradeRequirementType: "none",
+    allowedGradeIds: [],
+    exactQtyByGrade: {},
+  };
+}
+
 interface NewOrderDraft {
   showForm: boolean;
   externalOrderId: string;
   customerId: string;
   channelId: string;
   currencyId: string;
-  productId: string;
-  quantity: string;
-  unitPrice: string;
   shippingPerUnit: string;
-  discountType: "none" | "percentage" | "fixed";
-  discountValue: string;
   commissionType: "none" | "percentage" | "fixed";
   commissionValue: string;
-  gradeRequirementType: "none" | "allowed_set" | "exact_composition";
-  allowedGradeIds: string[];
-  exactQtyByGrade: Record<string, string>;
+  lines: NewOrderLine[];
 }
 
 function emptyNewOrderDraft(): NewOrderDraft {
@@ -97,18 +114,24 @@ function emptyNewOrderDraft(): NewOrderDraft {
     customerId: "",
     channelId: "",
     currencyId: "",
-    productId: "",
-    quantity: "",
-    unitPrice: "",
     shippingPerUnit: "",
-    discountType: "none",
-    discountValue: "",
     commissionType: "none",
     commissionValue: "",
-    gradeRequirementType: "none",
-    allowedGradeIds: [],
-    exactQtyByGrade: {},
+    lines: [emptyOrderLine()],
   };
+}
+
+function lineDiscountAmount(line: NewOrderLine): number {
+  const gross = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+  const discountValueNum = Number(line.discountValue) || 0;
+  if (line.discountType === "percentage") return (gross * discountValueNum) / 100;
+  if (line.discountType === "fixed") return discountValueNum;
+  return 0;
+}
+
+function lineTotal(line: NewOrderLine): number {
+  const gross = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
+  return gross - lineDiscountAmount(line);
 }
 
 export function SalesOrdersPage() {
@@ -122,24 +145,7 @@ export function SalesOrdersPage() {
   const accounts = useFetch<Account[]>("/settings/accounts");
 
   const [draft, setDraft, clearDraft] = useDraft<NewOrderDraft>("new-sales-order", emptyNewOrderDraft());
-  const {
-    showForm,
-    externalOrderId,
-    customerId,
-    channelId,
-    currencyId,
-    productId,
-    quantity,
-    unitPrice,
-    shippingPerUnit,
-    discountType,
-    discountValue,
-    commissionType,
-    commissionValue,
-    gradeRequirementType,
-    allowedGradeIds,
-    exactQtyByGrade,
-  } = draft;
+  const { showForm, externalOrderId, customerId, channelId, currencyId, shippingPerUnit, commissionType, commissionValue, lines } = draft;
 
   function patchDraft(patch: Partial<NewOrderDraft>) {
     setDraft((d) => ({ ...d, ...patch }));
@@ -151,18 +157,29 @@ export function SalesOrdersPage() {
   const setCustomerId = (v: string) => patchDraft({ customerId: v });
   const setChannelId = (v: string) => patchDraft({ channelId: v });
   const setCurrencyId = (v: string) => patchDraft({ currencyId: v });
-  const setProductId = (v: string) => patchDraft({ productId: v });
-  const setQuantity = (v: string) => patchDraft({ quantity: v });
-  const setUnitPrice = (v: string) => patchDraft({ unitPrice: v });
   const setShippingPerUnit = (v: string) => patchDraft({ shippingPerUnit: v });
-  const setDiscountType = (v: NewOrderDraft["discountType"]) => patchDraft({ discountType: v });
-  const setDiscountValue = (v: string) => patchDraft({ discountValue: v });
   const setCommissionType = (v: NewOrderDraft["commissionType"]) => patchDraft({ commissionType: v });
   const setCommissionValue = (v: string) => patchDraft({ commissionValue: v });
-  const setGradeRequirementType = (v: NewOrderDraft["gradeRequirementType"]) => patchDraft({ gradeRequirementType: v });
-  const setAllowedGradeIds = (updater: (prev: string[]) => string[]) => setDraft((d) => ({ ...d, allowedGradeIds: updater(d.allowedGradeIds) }));
-  const setExactQtyByGrade = (updater: (prev: Record<string, string>) => Record<string, string>) =>
-    setDraft((d) => ({ ...d, exactQtyByGrade: updater(d.exactQtyByGrade) }));
+
+  function updateLine(index: number, patch: Partial<NewOrderLine>) {
+    setDraft((d) => ({ ...d, lines: d.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
+  }
+  function addLine() {
+    setDraft((d) => ({ ...d, lines: [...d.lines, emptyOrderLine()] }));
+  }
+  function removeLine(index: number) {
+    setDraft((d) => ({ ...d, lines: d.lines.length > 1 ? d.lines.filter((_, i) => i !== index) : d.lines }));
+  }
+  function toggleAllowedGrade(index: number, gradeId: string) {
+    updateLine(index, {
+      allowedGradeIds: lines[index]!.allowedGradeIds.includes(gradeId)
+        ? lines[index]!.allowedGradeIds.filter((g) => g !== gradeId)
+        : [...lines[index]!.allowedGradeIds, gradeId],
+    });
+  }
+  function setExactQty(index: number, gradeId: string, value: string) {
+    updateLine(index, { exactQtyByGrade: { ...lines[index]!.exactQtyByGrade, [gradeId]: value } });
+  }
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -236,10 +253,6 @@ export function SalesOrdersPage() {
     setPendingAction({ orderId, kind: "payment" });
   }
 
-  function toggleAllowedGrade(id: string) {
-    setAllowedGradeIds((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
-  }
-
   function customerLabel(c: Customer) {
     const locality = [c.city, c.country].filter(Boolean).join(", ");
     const parts = [c.name, c.address, locality, c.contact].filter(Boolean);
@@ -273,15 +286,12 @@ export function SalesOrdersPage() {
     }
   }
 
-  const quantityNum = Number(quantity) || 0;
-  const unitPriceNum = Number(unitPrice) || 0;
-  const grossPreview = quantityNum * unitPriceNum;
-  const discountValueNum = Number(discountValue) || 0;
-  const discountAmountPreview =
-    discountType === "percentage" ? (grossPreview * discountValueNum) / 100 : discountType === "fixed" ? discountValueNum : 0;
+  const totalQuantityPreview = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+  const grossPreview = lines.reduce((sum, l) => sum + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0), 0);
+  const discountAmountPreview = lines.reduce((sum, l) => sum + lineDiscountAmount(l), 0);
   const shippingPerUnitNum = Number(shippingPerUnit) || 0;
   const subtotalPreview = grossPreview - discountAmountPreview;
-  const shippingTotalPreview = shippingPerUnitNum * quantityNum;
+  const shippingTotalPreview = shippingPerUnitNum * totalQuantityPreview;
   const commissionBasePreview = subtotalPreview - shippingTotalPreview;
   const commissionValueNum = Number(commissionValue) || 0;
   const commissionAmountPreview =
@@ -293,11 +303,6 @@ export function SalesOrdersPage() {
     setError(null);
     setSubmitting(true);
     try {
-      const exactGradeQuantities =
-        gradeRequirementType === "exact_composition"
-          ? Object.fromEntries(Object.entries(exactQtyByGrade).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)]))
-          : undefined;
-
       const created = await api.post<SalesOrder>("/sales/orders", {
         customerId,
         channelId,
@@ -306,18 +311,19 @@ export function SalesOrdersPage() {
         shippingPerUnit: shippingPerUnit ? Number(shippingPerUnit) : undefined,
         commissionType: commissionType === "none" ? undefined : commissionType,
         commissionValue: commissionType === "none" ? undefined : Number(commissionValue) || 0,
-        lines: [
-          {
-            productId,
-            quantity: Number(quantity),
-            unitPrice: unitPrice ? Number(unitPrice) : undefined,
-            discountType: discountType === "none" ? undefined : discountType,
-            discountValue: discountType === "none" ? undefined : Number(discountValue) || 0,
-            gradeRequirementType,
-            allowedGradeIds: gradeRequirementType === "allowed_set" ? allowedGradeIds : undefined,
-            exactGradeQuantities,
-          },
-        ],
+        lines: lines.map((line) => ({
+          productId: line.productId,
+          quantity: Number(line.quantity),
+          unitPrice: line.unitPrice ? Number(line.unitPrice) : undefined,
+          discountType: line.discountType === "none" ? undefined : line.discountType,
+          discountValue: line.discountType === "none" ? undefined : Number(line.discountValue) || 0,
+          gradeRequirementType: line.gradeRequirementType,
+          allowedGradeIds: line.gradeRequirementType === "allowed_set" ? line.allowedGradeIds : undefined,
+          exactGradeQuantities:
+            line.gradeRequirementType === "exact_composition"
+              ? Object.fromEntries(Object.entries(line.exactQtyByGrade).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)]))
+              : undefined,
+        })),
       });
       clearDraft();
       setSuccessMessage(`Order ${created.orderNumber} created.`);
@@ -438,44 +444,121 @@ export function SalesOrdersPage() {
               </select>
             </div>
           </div>
-          <p style={{ color: "var(--text-muted)", fontSize: 12 }}>First line item (mixed-grade, no ratio promised):</p>
-          <div className="form-row">
-            <div className="field">
-              <label>Product</label>
-              <select value={productId} onChange={(e) => setProductId(e.target.value)} required>
-                <option value="">Select...</option>
-                {products.data?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.skuCode} — {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label>Quantity</label>
-              <input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} required min={1} />
-            </div>
-            <div className="field">
-              <label>Unit price (optional)</label>
-              <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} min={0} step="0.01" />
-            </div>
-          </div>
-
-          <div className="form-row">
-            <div className="field">
-              <label>Discount</label>
-              <select value={discountType} onChange={(e) => setDiscountType(e.target.value as typeof discountType)}>
-                <option value="none">No discount</option>
-                <option value="percentage">Percentage (%)</option>
-                <option value="fixed">Fixed amount</option>
-              </select>
-            </div>
-            {discountType !== "none" && (
-              <div className="field">
-                <label>{discountType === "percentage" ? "Discount %" : "Discount amount"}</label>
-                <input type="number" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} min={0} step="0.01" />
+          <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Line items (mixed-grade, no ratio promised, unless a grade requirement is set per line):</p>
+          {lines.map((line, index) => (
+            <div key={index} className="panel" style={{ marginBottom: 12 }}>
+              <div className="form-row">
+                <div className="field">
+                  <label>Product</label>
+                  <select value={line.productId} onChange={(e) => updateLine(index, { productId: e.target.value })} required>
+                    <option value="">Select...</option>
+                    {products.data?.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.skuCode} — {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Quantity</label>
+                  <input type="number" value={line.quantity} onChange={(e) => updateLine(index, { quantity: e.target.value })} required min={1} />
+                </div>
+                <div className="field">
+                  <label>Unit price (optional)</label>
+                  <input type="number" value={line.unitPrice} onChange={(e) => updateLine(index, { unitPrice: e.target.value })} min={0} step="0.01" />
+                </div>
+                <div className="field" style={{ maxWidth: 140 }}>
+                  <label>Line total</label>
+                  <p style={{ margin: "6px 0", fontWeight: 600 }}>{lineTotal(line).toLocaleString()}</p>
+                </div>
+                {lines.length > 1 && (
+                  <div className="field" style={{ justifyContent: "flex-end" }}>
+                    <label>&nbsp;</label>
+                    <button type="button" className="secondary" onClick={() => removeLine(index)}>
+                      Remove
+                    </button>
+                  </div>
+                )}
               </div>
-            )}
+
+              <div className="form-row">
+                <div className="field">
+                  <label>Discount</label>
+                  <select value={line.discountType} onChange={(e) => updateLine(index, { discountType: e.target.value as NewOrderLine["discountType"] })}>
+                    <option value="none">No discount</option>
+                    <option value="percentage">Percentage (%)</option>
+                    <option value="fixed">Fixed amount</option>
+                  </select>
+                </div>
+                {line.discountType !== "none" && (
+                  <div className="field">
+                    <label>{line.discountType === "percentage" ? "Discount %" : "Discount amount"}</label>
+                    <input
+                      type="number"
+                      value={line.discountValue}
+                      onChange={(e) => updateLine(index, { discountValue: e.target.value })}
+                      min={0}
+                      step="0.01"
+                    />
+                  </div>
+                )}
+                <div className="field">
+                  <label>Grade requirement</label>
+                  <select
+                    value={line.gradeRequirementType}
+                    onChange={(e) => updateLine(index, { gradeRequirementType: e.target.value as NewOrderLine["gradeRequirementType"] })}
+                  >
+                    <option value="none">None — mixed grade, no ratio promised</option>
+                    <option value="allowed_set">Allowed grades only</option>
+                    <option value="exact_composition">Exact composition</option>
+                  </select>
+                </div>
+              </div>
+
+              {line.gradeRequirementType === "allowed_set" && (
+                <div className="field">
+                  <label>Which grades are allowed?</label>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    {grades.data?.map((g) => (
+                      <label key={g.id} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          style={{ width: "auto" }}
+                          checked={line.allowedGradeIds.includes(g.id)}
+                          onChange={() => toggleAllowedGrade(index, g.id)}
+                        />
+                        {g.code}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {line.gradeRequirementType === "exact_composition" && (
+                <div className="field">
+                  <label>Required quantity per grade (must sum to the line quantity)</label>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    {grades.data?.map((g) => (
+                      <div key={g.id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <span style={{ fontSize: 12 }}>{g.code}</span>
+                        <input
+                          type="number"
+                          style={{ width: 60 }}
+                          min={0}
+                          value={line.exactQtyByGrade[g.id] ?? ""}
+                          onChange={(e) => setExactQty(index, g.id, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          <div style={{ marginBottom: 12 }}>
+            <button type="button" className="secondary" onClick={addLine}>
+              + Add line
+            </button>
           </div>
 
           <div className="form-row">
@@ -484,7 +567,7 @@ export function SalesOrdersPage() {
               <input type="number" value={shippingPerUnit} onChange={(e) => setShippingPerUnit(e.target.value)} min={0} step="0.01" />
               {shippingPerUnitNum > 0 && (
                 <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  {shippingPerUnitNum} × {quantityNum} pcs = {shippingTotalPreview.toLocaleString()} total shipping
+                  {shippingPerUnitNum} × {totalQuantityPreview} pcs = {shippingTotalPreview.toLocaleString()} total shipping
                 </p>
               )}
             </div>
@@ -504,57 +587,15 @@ export function SalesOrdersPage() {
             )}
           </div>
 
-          {(discountType !== "none" || shippingPerUnitNum > 0 || commissionType !== "none") && quantityNum > 0 && (
+          {totalQuantityPreview > 0 && (
             <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
               Gross {grossPreview.toLocaleString()}
-              {discountType !== "none" && ` − discount ${discountAmountPreview.toLocaleString()}`} = subtotal {subtotalPreview.toLocaleString()} − shipping{" "}
-              {shippingTotalPreview.toLocaleString()}
-              {commissionType !== "none" && ` − commission ${commissionAmountPreview.toLocaleString()} (on ${commissionBasePreview.toLocaleString()})`} ={" "}
-              <strong>net {netTotalPreview.toLocaleString()}</strong>
+              {discountAmountPreview > 0 && ` − discount ${discountAmountPreview.toLocaleString()}`} = subtotal {subtotalPreview.toLocaleString()} −
+              shipping {shippingTotalPreview.toLocaleString()}
+              {commissionType !== "none" && ` − commission ${commissionAmountPreview.toLocaleString()} (on ${commissionBasePreview.toLocaleString()})`}{" "}
+              = <strong>net {netTotalPreview.toLocaleString()}</strong> ({totalQuantityPreview} pcs across {lines.length} line
+              {lines.length === 1 ? "" : "s"})
             </p>
-          )}
-
-          <div className="field">
-            <label>Grade requirement</label>
-            <select value={gradeRequirementType} onChange={(e) => setGradeRequirementType(e.target.value as typeof gradeRequirementType)}>
-              <option value="none">None — mixed grade, no ratio promised</option>
-              <option value="allowed_set">Allowed grades only</option>
-              <option value="exact_composition">Exact composition</option>
-            </select>
-          </div>
-
-          {gradeRequirementType === "allowed_set" && (
-            <div className="field">
-              <label>Which grades are allowed?</label>
-              <div style={{ display: "flex", gap: 10 }}>
-                {grades.data?.map((g) => (
-                  <label key={g.id} style={{ display: "flex", gap: 4, alignItems: "center", fontSize: 13 }}>
-                    <input type="checkbox" style={{ width: "auto" }} checked={allowedGradeIds.includes(g.id)} onChange={() => toggleAllowedGrade(g.id)} />
-                    {g.code}
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {gradeRequirementType === "exact_composition" && (
-            <div className="field">
-              <label>Required quantity per grade (must sum to the line quantity)</label>
-              <div style={{ display: "flex", gap: 10 }}>
-                {grades.data?.map((g) => (
-                  <div key={g.id} style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                    <span style={{ fontSize: 12 }}>{g.code}</span>
-                    <input
-                      type="number"
-                      style={{ width: 60 }}
-                      min={0}
-                      value={exactQtyByGrade[g.id] ?? ""}
-                      onChange={(e) => setExactQtyByGrade((v) => ({ ...v, [g.id]: e.target.value }))}
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
 
           <button type="submit" disabled={submitting}>
