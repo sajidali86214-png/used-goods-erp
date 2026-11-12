@@ -14,6 +14,7 @@ import {
   getAccountBalance,
 } from "./ledgerService.js";
 import { lockPeriod, reopenPeriod } from "./periodLockService.js";
+import { getAccountStatement } from "./financeStatementService.js";
 import { prisma } from "../../lib/prisma.js";
 import { Decimal } from "../../lib/money.js";
 
@@ -188,6 +189,16 @@ export async function financeRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const balance = await getAccountBalance(id);
       return { accountId: id, balance: balance.toString() };
+    },
+  );
+
+  app.get(
+    "/finance/accounts/:id/statement",
+    { preHandler: requirePermission("finance.report.view") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      const { from, to } = request.query as { from?: string; to?: string };
+      return getAccountStatement({ accountId: id, from: from ? new Date(from) : undefined, to: to ? new Date(to) : undefined });
     },
   );
 

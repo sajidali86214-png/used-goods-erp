@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+import { downloadCsv, toCsv } from "../lib/csv";
 
 interface Account {
   id: string;
@@ -23,7 +24,7 @@ interface Order {
 }
 
 export function FinancePage() {
-  const [tab, setTab] = useState<"expenses" | "receipts" | "balances">("expenses");
+  const [tab, setTab] = useState<"expenses" | "receipts" | "balances" | "ledger">("expenses");
   const accounts = useFetch<Account[]>("/settings/accounts");
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
@@ -40,11 +41,174 @@ export function FinancePage() {
         <button className={tab === "balances" ? "active" : ""} onClick={() => setTab("balances")}>
           Account Balances
         </button>
+        <button className={tab === "ledger" ? "active" : ""} onClick={() => setTab("ledger")}>
+          Ledger
+        </button>
       </div>
 
       {tab === "expenses" && <ExpenseForm accounts={accounts.data ?? []} currencies={currencies.data ?? []} />}
       {tab === "receipts" && <ReceiptForm accounts={accounts.data ?? []} currencies={currencies.data ?? []} />}
       {tab === "balances" && <AccountBalances accounts={accounts.data ?? []} />}
+      {tab === "ledger" && <LedgerTab accounts={accounts.data ?? []} />}
+    </div>
+  );
+}
+
+interface StatementLine {
+  id: string;
+  postedAt: string;
+  party: string | null;
+  description: string;
+  category: string | null;
+  currencyId: string;
+  amount: string;
+  sourceDocumentType: string | null;
+  sourceDocumentId: string | null;
+  runningBalance: string;
+}
+interface Statement {
+  account: { id: string; label: string; kind: string; currencyId: string };
+  periodFrom: string | null;
+  periodTo: string | null;
+  openingBalance: string;
+  closingBalance: string;
+  moneyIn: string;
+  moneyOut: string;
+  lines: StatementLine[];
+}
+
+function LedgerTab({ accounts }: { accounts: Account[] }) {
+  const [accountId, setAccountId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [partyFilter, setPartyFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+
+  const query = new URLSearchParams();
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  const statement = useFetch<Statement>(
+    accountId ? `/finance/accounts/${accountId}/statement${query.toString() ? `?${query.toString()}` : ""}` : null,
+    [accountId, from, to],
+  );
+
+  const types = [...new Set((statement.data?.lines ?? []).map((l) => l.sourceDocumentType).filter(Boolean))] as string[];
+  const filteredLines = (statement.data?.lines ?? []).filter((l) => {
+    if (partyFilter && !(l.party ?? "").toLowerCase().includes(partyFilter.toLowerCase())) return false;
+    if (typeFilter && l.sourceDocumentType !== typeFilter) return false;
+    return true;
+  });
+
+  function handleDownload() {
+    if (!statement.data) return;
+    const csv = toCsv(filteredLines, [
+      { header: "Date", value: (l) => new Date(l.postedAt).toISOString().slice(0, 10) },
+      { header: "Party", value: (l) => l.party ?? "" },
+      { header: "Description", value: (l) => l.description },
+      { header: "Category", value: (l) => l.category ?? "" },
+      { header: "Amount", value: (l) => l.amount },
+      { header: "Running balance", value: (l) => l.runningBalance },
+      { header: "Source", value: (l) => `${l.sourceDocumentType ?? ""} ${l.sourceDocumentId ?? ""}` },
+    ]);
+    downloadCsv(`${statement.data.account.label}-statement-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  }
+
+  return (
+    <div className="panel">
+      <h3>Account statement</h3>
+      <div className="form-row">
+        <div className="field">
+          <label>Account</label>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label} ({a.kind})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>From</label>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>To</label>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Party contains</label>
+          <input value={partyFilter} onChange={(e) => setPartyFilter(e.target.value)} placeholder="e.g. a customer or supplier name" />
+        </div>
+        <div className="field">
+          <label>Type</label>
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+            <option value="">All</option>
+            {types.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {!accountId && <p style={{ color: "var(--text-muted)" }}>Select an account to see its statement.</p>}
+      {statement.loading && <p>Loading...</p>}
+      {statement.data && (
+        <>
+          <div className="stat-grid" style={{ marginBottom: 16 }}>
+            <div className="stat-tile">
+              <div className="value">{Number(statement.data.openingBalance).toLocaleString()}</div>
+              <div className="label">Opening balance</div>
+            </div>
+            <div className="stat-tile">
+              <div className="value">{Number(statement.data.moneyIn).toLocaleString()}</div>
+              <div className="label">Money in</div>
+            </div>
+            <div className="stat-tile">
+              <div className="value">{Number(statement.data.moneyOut).toLocaleString()}</div>
+              <div className="label">Money out</div>
+            </div>
+            <div className="stat-tile">
+              <div className="value">{Number(statement.data.closingBalance).toLocaleString()}</div>
+              <div className="label">Closing balance</div>
+            </div>
+          </div>
+          <button className="secondary" onClick={handleDownload} disabled={filteredLines.length === 0} style={{ marginBottom: 8 }}>
+            Download statement CSV
+          </button>
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Party</th>
+                <th>Description</th>
+                <th>Category</th>
+                <th>Amount</th>
+                <th>Running balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredLines.map((l) => (
+                <tr key={l.id}>
+                  <td>{new Date(l.postedAt).toLocaleDateString()}</td>
+                  <td>{l.party ?? "—"}</td>
+                  <td>{l.description}</td>
+                  <td>{l.category ?? "—"}</td>
+                  <td style={{ color: Number(l.amount) < 0 ? "var(--danger, #b91c1c)" : undefined }}>{Number(l.amount).toLocaleString()}</td>
+                  <td>{Number(l.runningBalance).toLocaleString()}</td>
+                </tr>
+              ))}
+              {filteredLines.length === 0 && (
+                <tr>
+                  <td colSpan={6}>No transactions match these filters.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </>
+      )}
     </div>
   );
 }
