@@ -218,6 +218,12 @@ export function PurchasingPage() {
                       step="0.01"
                     />
                   </div>
+                  <div className="field" style={{ maxWidth: 140 }}>
+                    <label>Line total</label>
+                    <p style={{ margin: "6px 0", fontWeight: 600 }}>
+                      {(Number(line.orderedQty) * Number(line.unitPrice) || 0).toLocaleString()}
+                    </p>
+                  </div>
                   {lines.length > 1 && (
                     <div className="field" style={{ justifyContent: "flex-end" }}>
                       <label>&nbsp;</label>
@@ -233,6 +239,13 @@ export function PurchasingPage() {
                   + Add line
                 </button>
               </div>
+              <p style={{ fontSize: 15, marginBottom: 12 }}>
+                <strong>
+                  Grand total: {lines.reduce((sum, l) => sum + (Number(l.orderedQty) * Number(l.unitPrice) || 0), 0).toLocaleString()}
+                </strong>{" "}
+                ({lines.reduce((sum, l) => sum + (Number(l.orderedQty) || 0), 0).toLocaleString()} pieces across {lines.length} line
+                {lines.length === 1 ? "" : "s"})
+              </p>
               <button type="submit">Create PO</button>
             </form>
           )}
@@ -545,6 +558,12 @@ function ReceiveGrnForm({
               step="0.01"
             />
           </div>
+          <div className="field" style={{ maxWidth: 140 }}>
+            <label>Line total</label>
+            <p style={{ margin: "6px 0", fontWeight: 600 }}>
+              {(Number(line.receivedQty) * Number(line.unitPrice) || 0).toLocaleString()}
+            </p>
+          </div>
           {lines.length > 1 && (
             <div className="field" style={{ justifyContent: "flex-end" }}>
               <label>&nbsp;</label>
@@ -560,6 +579,13 @@ function ReceiveGrnForm({
           + Add line
         </button>
       </div>
+      <p style={{ fontSize: 15, marginBottom: 12 }}>
+        <strong>
+          Grand total: {lines.reduce((sum, l) => sum + (Number(l.receivedQty) * Number(l.unitPrice) || 0), 0).toLocaleString()}
+        </strong>{" "}
+        ({lines.reduce((sum, l) => sum + (Number(l.receivedQty) || 0), 0).toLocaleString()} pieces across {lines.length} line
+        {lines.length === 1 ? "" : "s"})
+      </p>
 
       <div className="form-row">
         <div className="field">
