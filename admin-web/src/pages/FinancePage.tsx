@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 import { downloadCsv, toCsv } from "../lib/csv";
+import { useDraft } from "../lib/useDraft";
 
 interface Account {
   id: string;
@@ -213,12 +214,24 @@ function LedgerTab({ accounts }: { accounts: Account[] }) {
   );
 }
 
+interface ExpenseDraft {
+  categoryId: string;
+  accountId: string;
+  currencyId: string;
+  amount: string;
+}
+function emptyExpenseDraft(): ExpenseDraft {
+  return { categoryId: "", accountId: "", currencyId: "", amount: "" };
+}
+
 function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies: Currency[] }) {
   const categories = useFetch<ExpenseCategory[]>("/settings/expense-categories");
-  const [categoryId, setCategoryId] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [currencyId, setCurrencyId] = useState("");
-  const [amount, setAmount] = useState("");
+  const [draft, setDraft, clearDraft] = useDraft<ExpenseDraft>("new-expense", emptyExpenseDraft());
+  const { categoryId, accountId, currencyId, amount } = draft;
+  const setCategoryId = (v: string) => setDraft((d) => ({ ...d, categoryId: v }));
+  const setAccountId = (v: string) => setDraft((d) => ({ ...d, accountId: v }));
+  const setCurrencyId = (v: string) => setDraft((d) => ({ ...d, currencyId: v }));
+  const setAmount = (v: string) => setDraft((d) => ({ ...d, amount: v }));
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -238,7 +251,7 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
       });
       await api.post(`/finance/post/expenses/${expense.id}`);
       setSuccess("Expense recorded and posted to the ledger.");
-      setAmount("");
+      clearDraft();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not record expense");
     }
