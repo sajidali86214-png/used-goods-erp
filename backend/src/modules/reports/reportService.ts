@@ -54,6 +54,41 @@ export async function getInventoryValuation() {
 }
 
 /**
+ * Same unsold-inventory valuation as getInventoryValuation, grouped by
+ * category instead of product — "how much of our money is tied up in
+ * Bags vs Shoes", with each category's % contribution to the total, for
+ * the dashboard's category-level inventory view.
+ */
+export async function getInventoryValueByCategory() {
+  const costLayers = await prisma.costLayer.findMany({
+    include: { lot: { include: { product: { include: { category: true } } } } },
+  });
+
+  const byCategory = new Map<string, { categoryId: string; categoryName: string; quantityRemaining: Decimal; value: Decimal }>();
+  for (const cl of costLayers) {
+    if (cl.quantityRemaining.isZero()) continue;
+    const category = cl.lot.product.category;
+    const key = category?.id ?? "uncategorized";
+    const bucket =
+      byCategory.get(key) ??
+      { categoryId: key, categoryName: category?.name ?? "Uncategorized", quantityRemaining: new Decimal(0), value: new Decimal(0) };
+    bucket.quantityRemaining = bucket.quantityRemaining.plus(cl.quantityRemaining);
+    bucket.value = bucket.value.plus(cl.quantityRemaining.times(cl.unitCost));
+    byCategory.set(key, bucket);
+  }
+
+  const totalValue = sumDecimal([...byCategory.values()].map((l) => l.value));
+  const lines = [...byCategory.values()]
+    .map((l) => ({
+      ...l,
+      contributionPct: totalValue.isZero() ? new Decimal(0) : l.value.times(100).div(totalValue).toDecimalPlaces(2),
+    }))
+    .sort((a, b) => b.value.minus(a.value).toNumber());
+
+  return { lines, totalValue };
+}
+
+/**
  * Per-product stock levels across all grades/bins/states, for the main
  * inventory list view. Deliberately excludes unit cost — that stays behind
  * cost.view (see getInventoryValuation) — so a stock.count-only role (e.g.

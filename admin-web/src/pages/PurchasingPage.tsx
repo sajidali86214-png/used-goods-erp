@@ -247,6 +247,8 @@ export function PurchasingPage() {
                     <th>Supplier</th>
                     <th>Status</th>
                     <th>Lines</th>
+                    <th>Pieces</th>
+                    <th>Amount</th>
                     <th>Grade mix</th>
                     <th></th>
                   </tr>
@@ -260,6 +262,8 @@ export function PurchasingPage() {
                         <span className="badge">{po.status}</span>
                       </td>
                       <td>{po.lines.length}</td>
+                      <td>{po.lines.reduce((sum, l) => sum + Number(l.orderedQty), 0).toLocaleString()}</td>
+                      <td>{po.lines.reduce((sum, l) => sum + Number(l.orderedQty) * Number(l.unitPrice), 0).toLocaleString()}</td>
                       <td>
                         {Array.from(new Set(po.lines.map((l) => l.grade?.code).filter(Boolean))).join(", ") || "—"}
                       </td>
@@ -298,6 +302,37 @@ interface Currency {
   id: string;
   code: string;
 }
+interface PoStatusLine {
+  lineId: string;
+  productId: string;
+  gradeId: string | null;
+  orderedQty: string;
+  receivedQty: string;
+  outstandingQty: string;
+}
+
+interface ReceiveLine {
+  poLineId: string | null;
+  productId: string;
+  gradeId: string;
+  receivedQty: string;
+  unitPrice: string;
+}
+
+function emptyReceiveLine(): ReceiveLine {
+  return { poLineId: null, productId: "", gradeId: "", receivedQty: "", unitPrice: "" };
+}
+
+interface ReceiveGrnDraft {
+  poId: string;
+  binId: string;
+  currencyId: string;
+  lines: ReceiveLine[];
+}
+
+function emptyReceiveDraft(): ReceiveGrnDraft {
+  return { poId: "", binId: "", currencyId: "", lines: [emptyReceiveLine()] };
+}
 
 function ReceiveGrnForm({
   pos,
@@ -313,29 +348,69 @@ function ReceiveGrnForm({
   const bins = useFetch<Bin[]>("/settings/bins");
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
-  const [poId, setPoId] = useState("");
-  const [poLineId, setPoLineId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [gradeId, setGradeId] = useState("");
-  const [receivedQty, setReceivedQty] = useState("");
-  const [binId, setBinId] = useState("");
-  const [currencyId, setCurrencyId] = useState("");
-  const [sourceUnitPrice, setSourceUnitPrice] = useState("");
+  const [draft, setDraft, clearDraft] = useDraft<ReceiveGrnDraft>("receive-grn", emptyReceiveDraft());
+  const { poId, binId, currencyId, lines } = draft;
   const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingPoLines, setLoadingPoLines] = useState(false);
 
   const selectedPo = pos.find((p) => p.id === poId);
 
-  function handleSelectPoLine(lineId: string) {
-    setPoLineId(lineId);
-    const line = selectedPo?.lines.find((l) => l.id === lineId);
-    if (line) {
-      setProductId(line.productId);
-      setGradeId(line.gradeId ?? "");
-      setSourceUnitPrice(line.unitPrice);
-      setCurrencyId(selectedPo!.supplier.defaultCurrencyId);
+  function setBinId(v: string) {
+    setDraft((d) => ({ ...d, binId: v }));
+  }
+  function setCurrencyId(v: string) {
+    setDraft((d) => ({ ...d, currencyId: v }));
+  }
+  function updateLine(index: number, patch: Partial<ReceiveLine>) {
+    setDraft((d) => ({ ...d, lines: d.lines.map((l, i) => (i === index ? { ...l, ...patch } : l)) }));
+  }
+  function addLine() {
+    setDraft((d) => ({ ...d, lines: [...d.lines, emptyReceiveLine()] }));
+  }
+  function removeLine(index: number) {
+    setDraft((d) => ({ ...d, lines: d.lines.length > 1 ? d.lines.filter((_, i) => i !== index) : d.lines }));
+  }
+
+  // Selecting an approved PO pulls in every outstanding line automatically,
+  // pre-filled with grade/price from the PO and the remaining qty to
+  // receive — no more picking lines one at a time.
+  async function handleSelectPo(newPoId: string) {
+    if (!newPoId) {
+      setDraft((d) => ({ ...d, poId: "", lines: [emptyReceiveLine()] }));
+      return;
+    }
+    const po = pos.find((p) => p.id === newPoId);
+    setLoadingPoLines(true);
+    setError(null);
+    try {
+      const status = await api.get<{ lines: PoStatusLine[] }>(`/purchasing/orders/${newPoId}/status`);
+      const outstandingLines = status.lines.filter((l) => Number(l.outstandingQty) > 0);
+      const newLines: ReceiveLine[] = outstandingLines.map((sl) => {
+        const poLine = po?.lines.find((l) => l.id === sl.lineId);
+        return {
+          poLineId: sl.lineId,
+          productId: sl.productId,
+          gradeId: poLine?.gradeId ?? "",
+          receivedQty: sl.outstandingQty,
+          unitPrice: poLine?.unitPrice ?? "",
+        };
+      });
+      setDraft((d) => ({
+        ...d,
+        poId: newPoId,
+        currencyId: po?.supplier.defaultCurrencyId ?? d.currencyId,
+        lines: newLines.length > 0 ? newLines : [emptyReceiveLine()],
+      }));
+      if (outstandingLines.length === 0) {
+        setError("This PO has nothing left outstanding to receive.");
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load this PO's lines");
+    } finally {
+      setLoadingPoLines(false);
     }
   }
 
@@ -346,38 +421,49 @@ function ReceiveGrnForm({
     setSubmitting(true);
     try {
       const supplierId = selectedPo?.supplier.id;
+      const linesToReceive = lines.filter((l) => l.productId && Number(l.receivedQty) > 0);
+      if (linesToReceive.length === 0) throw new Error("No lines with a received quantity greater than zero.");
+
       const grn = await api.post<{ grnNumber: string; lines: { id: string }[] }>("/purchasing/grns", {
         supplierId,
         receiptDate: new Date().toISOString(),
-        lines: [{ poLineId: poLineId || undefined, productId, gradeId: gradeId || undefined, receivedQty: Number(receivedQty) }],
+        lines: linesToReceive.map((l) => ({
+          poLineId: l.poLineId ?? undefined,
+          productId: l.productId,
+          gradeId: l.gradeId || undefined,
+          receivedQty: Number(l.receivedQty),
+        })),
       });
 
-      // Second step: actually land the receipt in inventory (creates the lot + cost layer).
-      const result = await api.post<{ lot: { lotCode: string } }>("/stock/receive", {
-        grnLineId: grn.lines[0]!.id,
-        productId,
-        gradeId: gradeId || undefined,
-        supplierId,
-        originalCurrencyId: currencyId,
-        sourceUnitPrice: Number(sourceUnitPrice),
-        exchangeRate: 1,
-        quantity: Number(receivedQty),
-        binId,
-        lotCode: grn.grnNumber,
-      });
-
-      for (const photo of photos) {
-        await api.post(`/products/${productId}/photos`, { mediaAssetId: photo.id });
+      // Second step per line: actually land each receipt in inventory (creates the lot + cost layer).
+      for (let i = 0; i < linesToReceive.length; i++) {
+        const l = linesToReceive[i]!;
+        await api.post("/stock/receive", {
+          grnLineId: grn.lines[i]!.id,
+          productId: l.productId,
+          gradeId: l.gradeId || undefined,
+          supplierId,
+          originalCurrencyId: currencyId,
+          sourceUnitPrice: Number(l.unitPrice) || 0,
+          exchangeRate: 1,
+          quantity: Number(l.receivedQty),
+          binId,
+          lotCode: `${grn.grnNumber}-${i + 1}`,
+        });
       }
 
-      const gradeLabel = grades.find((g) => g.id === gradeId)?.code;
+      const distinctProductIds = [...new Set(linesToReceive.map((l) => l.productId))];
+      for (const photo of photos) {
+        for (const pid of distinctProductIds) {
+          await api.post(`/products/${pid}/photos`, { mediaAssetId: photo.id });
+        }
+      }
+
       setSuccess(
-        `Recorded as GRN ${grn.grnNumber}, received into inventory as lot ${result.lot.lotCode} — currently ${gradeLabel ?? "Ungraded"}/Inspection. Move it to saleable stock from the lot's detail view.` +
-          (photos.length > 0 ? ` ${photos.length} photo(s) attached to the product.` : ""),
+        `Recorded as GRN ${grn.grnNumber} — ${linesToReceive.length} line(s) received into inventory, currently in Inspection. Move them to saleable stock from each lot's detail view.` +
+          (photos.length > 0 ? ` ${photos.length} photo(s) attached.` : ""),
       );
-      setReceivedQty("");
-      setSourceUnitPrice("");
-      setGradeId("");
+      clearDraft();
       setPhotos([]);
       onReceived();
     } catch (err) {
@@ -395,65 +481,86 @@ function ReceiveGrnForm({
       <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The GRN number is assigned automatically once recorded.</p>
       <div className="form-row">
         <div className="field">
-          <label>Against PO (optional)</label>
-          <select
-            value={poId}
-            onChange={(e) => {
-              setPoId(e.target.value);
-              setPoLineId("");
-            }}
-          >
+          <label>Against PO (optional) — picks up every outstanding line automatically</label>
+          <select value={poId} onChange={(e) => handleSelectPo(e.target.value)} disabled={loadingPoLines}>
             <option value="">No PO (direct receipt)</option>
-            {pos.map((po) => (
-              <option key={po.id} value={po.id}>
-                {po.poNumber} — {po.supplier.name}
-              </option>
-            ))}
+            {pos
+              .filter((po) => po.status === "approved")
+              .map((po) => (
+                <option key={po.id} value={po.id}>
+                  {po.poNumber} — {po.supplier.name}
+                </option>
+              ))}
           </select>
         </div>
       </div>
-      {selectedPo && (
-        <div className="field">
-          <label>PO line</label>
-          <select value={poLineId} onChange={(e) => handleSelectPoLine(e.target.value)}>
-            <option value="">Select a line...</option>
-            {selectedPo.lines.map((l) => (
-              <option key={l.id} value={l.id}>
-                {products.find((p) => p.id === l.productId)?.skuCode ?? l.productId} — ordered {l.orderedQty}
-                {l.grade ? ` (${l.grade.code})` : ""}
-              </option>
-            ))}
-          </select>
+
+      {loadingPoLines && <p>Loading PO lines...</p>}
+
+      {lines.map((line, index) => (
+        <div className="form-row" key={index}>
+          <div className="field">
+            <label>Product</label>
+            <select
+              value={line.productId}
+              onChange={(e) => updateLine(index, { productId: e.target.value })}
+              required
+              disabled={!!line.poLineId}
+            >
+              <option value="">Select...</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.skuCode} — {p.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Grade received</label>
+            <select value={line.gradeId} onChange={(e) => updateLine(index, { gradeId: e.target.value })}>
+              <option value="">Ungraded (needs inspection)</option>
+              {grades.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.code}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Received quantity</label>
+            <input
+              type="number"
+              value={line.receivedQty}
+              onChange={(e) => updateLine(index, { receivedQty: e.target.value })}
+              min={0}
+            />
+          </div>
+          <div className="field">
+            <label>Unit price</label>
+            <input
+              type="number"
+              value={line.unitPrice}
+              onChange={(e) => updateLine(index, { unitPrice: e.target.value })}
+              min={0}
+              step="0.01"
+            />
+          </div>
+          {lines.length > 1 && (
+            <div className="field" style={{ justifyContent: "flex-end" }}>
+              <label>&nbsp;</label>
+              <button type="button" className="secondary" onClick={() => removeLine(index)}>
+                Remove
+              </button>
+            </div>
+          )}
         </div>
-      )}
-      <div className="form-row">
-        <div className="field">
-          <label>Product</label>
-          <select value={productId} onChange={(e) => setProductId(e.target.value)} required disabled={!!poLineId}>
-            <option value="">Select...</option>
-            {products.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.skuCode} — {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Grade received</label>
-          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
-            <option value="">Ungraded (needs inspection)</option>
-            {grades.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.code}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Received quantity</label>
-          <input type="number" value={receivedQty} onChange={(e) => setReceivedQty(e.target.value)} required min={1} />
-        </div>
+      ))}
+      <div style={{ marginBottom: 12 }}>
+        <button type="button" className="secondary" onClick={addLine}>
+          + Add line
+        </button>
       </div>
+
       <div className="form-row">
         <div className="field">
           <label>Bin</label>
@@ -477,13 +584,9 @@ function ReceiveGrnForm({
             ))}
           </select>
         </div>
-        <div className="field">
-          <label>Unit price</label>
-          <input type="number" value={sourceUnitPrice} onChange={(e) => setSourceUnitPrice(e.target.value)} required min={0} step="0.01" />
-        </div>
       </div>
       <div className="field">
-        <label>Photos (optional — condition/listing photos for this product)</label>
+        <label>Photos (optional — condition/listing photos for this receipt)</label>
         <PhotoCapture kind="product" onUploaded={(p) => setPhotos((prev) => [...prev, p])} />
         <PhotoThumbnails photos={photos} onRemove={(id) => setPhotos((prev) => prev.filter((p) => p.id !== id))} />
       </div>

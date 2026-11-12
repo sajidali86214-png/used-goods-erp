@@ -1,8 +1,9 @@
-import { useState, Fragment, type FormEvent } from "react";
+import { useState, useEffect, Fragment, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+import { useDraft } from "../lib/useDraft";
 
 interface Customer {
   id: string;
@@ -29,6 +30,11 @@ interface Product {
 interface Grade {
   id: string;
   code: string;
+}
+interface Account {
+  id: string;
+  label: string;
+  kind: string;
 }
 interface SalesOrder {
   id: string;
@@ -65,6 +71,46 @@ type PendingAction =
   | { orderId: string; kind: "return" }
   | { orderId: string; kind: "cancel" };
 
+interface NewOrderDraft {
+  showForm: boolean;
+  externalOrderId: string;
+  customerId: string;
+  channelId: string;
+  currencyId: string;
+  productId: string;
+  quantity: string;
+  unitPrice: string;
+  shippingPerUnit: string;
+  discountType: "none" | "percentage" | "fixed";
+  discountValue: string;
+  commissionType: "none" | "percentage" | "fixed";
+  commissionValue: string;
+  gradeRequirementType: "none" | "allowed_set" | "exact_composition";
+  allowedGradeIds: string[];
+  exactQtyByGrade: Record<string, string>;
+}
+
+function emptyNewOrderDraft(): NewOrderDraft {
+  return {
+    showForm: false,
+    externalOrderId: "",
+    customerId: "",
+    channelId: "",
+    currencyId: "",
+    productId: "",
+    quantity: "",
+    unitPrice: "",
+    shippingPerUnit: "",
+    discountType: "none",
+    discountValue: "",
+    commissionType: "none",
+    commissionValue: "",
+    gradeRequirementType: "none",
+    allowedGradeIds: [],
+    exactQtyByGrade: {},
+  };
+}
+
 export function SalesOrdersPage() {
   const { has } = useAuth();
   const orders = useFetch<SalesOrder[]>("/sales/orders");
@@ -73,23 +119,51 @@ export function SalesOrdersPage() {
   const currencies = useFetch<Currency[]>("/settings/currencies");
   const products = useFetch<Product[]>("/products");
   const grades = useFetch<Grade[]>("/settings/grades");
+  const accounts = useFetch<Account[]>("/settings/accounts");
 
-  const [showForm, setShowForm] = useState(false);
-  const [externalOrderId, setExternalOrderId] = useState("");
-  const [customerId, setCustomerId] = useState("");
-  const [channelId, setChannelId] = useState("");
-  const [currencyId, setCurrencyId] = useState("");
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [shippingPerUnit, setShippingPerUnit] = useState("");
-  const [discountType, setDiscountType] = useState<"none" | "percentage" | "fixed">("none");
-  const [discountValue, setDiscountValue] = useState("");
-  const [commissionType, setCommissionType] = useState<"none" | "percentage" | "fixed">("none");
-  const [commissionValue, setCommissionValue] = useState("");
-  const [gradeRequirementType, setGradeRequirementType] = useState<"none" | "allowed_set" | "exact_composition">("none");
-  const [allowedGradeIds, setAllowedGradeIds] = useState<string[]>([]);
-  const [exactQtyByGrade, setExactQtyByGrade] = useState<Record<string, string>>({});
+  const [draft, setDraft, clearDraft] = useDraft<NewOrderDraft>("new-sales-order", emptyNewOrderDraft());
+  const {
+    showForm,
+    externalOrderId,
+    customerId,
+    channelId,
+    currencyId,
+    productId,
+    quantity,
+    unitPrice,
+    shippingPerUnit,
+    discountType,
+    discountValue,
+    commissionType,
+    commissionValue,
+    gradeRequirementType,
+    allowedGradeIds,
+    exactQtyByGrade,
+  } = draft;
+
+  function patchDraft(patch: Partial<NewOrderDraft>) {
+    setDraft((d) => ({ ...d, ...patch }));
+  }
+  function setShowForm(update: boolean | ((prev: boolean) => boolean)) {
+    setDraft((d) => ({ ...d, showForm: typeof update === "function" ? update(d.showForm) : update }));
+  }
+  const setExternalOrderId = (v: string) => patchDraft({ externalOrderId: v });
+  const setCustomerId = (v: string) => patchDraft({ customerId: v });
+  const setChannelId = (v: string) => patchDraft({ channelId: v });
+  const setCurrencyId = (v: string) => patchDraft({ currencyId: v });
+  const setProductId = (v: string) => patchDraft({ productId: v });
+  const setQuantity = (v: string) => patchDraft({ quantity: v });
+  const setUnitPrice = (v: string) => patchDraft({ unitPrice: v });
+  const setShippingPerUnit = (v: string) => patchDraft({ shippingPerUnit: v });
+  const setDiscountType = (v: NewOrderDraft["discountType"]) => patchDraft({ discountType: v });
+  const setDiscountValue = (v: string) => patchDraft({ discountValue: v });
+  const setCommissionType = (v: NewOrderDraft["commissionType"]) => patchDraft({ commissionType: v });
+  const setCommissionValue = (v: string) => patchDraft({ commissionValue: v });
+  const setGradeRequirementType = (v: NewOrderDraft["gradeRequirementType"]) => patchDraft({ gradeRequirementType: v });
+  const setAllowedGradeIds = (updater: (prev: string[]) => string[]) => setDraft((d) => ({ ...d, allowedGradeIds: updater(d.allowedGradeIds) }));
+  const setExactQtyByGrade = (updater: (prev: Record<string, string>) => Record<string, string>) =>
+    setDraft((d) => ({ ...d, exactQtyByGrade: updater(d.exactQtyByGrade) }));
+
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -232,18 +306,7 @@ export function SalesOrdersPage() {
           },
         ],
       });
-      setShowForm(false);
-      setExternalOrderId("");
-      setQuantity("");
-      setUnitPrice("");
-      setShippingPerUnit("");
-      setDiscountType("none");
-      setDiscountValue("");
-      setCommissionType("none");
-      setCommissionValue("");
-      setGradeRequirementType("none");
-      setAllowedGradeIds([]);
-      setExactQtyByGrade({});
+      clearDraft();
       setSuccessMessage(`Order ${created.orderNumber} created.`);
       orders.reload();
     } catch (err) {
@@ -500,6 +563,8 @@ export function SalesOrdersPage() {
                 <th>Fulfilment</th>
                 <th>Payment</th>
                 <th>Lines</th>
+                <th>Pieces</th>
+                <th>Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -562,10 +627,27 @@ export function SalesOrdersPage() {
                       )}
                     </td>
                     <td>{o.lines.length}</td>
+                    <td>{o.lines.reduce((sum, l) => sum + Number(l.quantity), 0).toLocaleString()}</td>
+                    <td>{Number(o.costSummary?.netTotal ?? 0).toLocaleString()}</td>
                   </tr>
-                  {pendingAction?.orderId === o.id && (
+                  {pendingAction?.orderId === o.id && pendingAction.kind === "payment" && (
                     <tr>
-                      <td colSpan={8} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
+                      <td colSpan={10} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
+                        <PaymentActionPopup
+                          orderId={o.id}
+                          accounts={accounts.data ?? []}
+                          onCancel={() => setPendingAction(null)}
+                          onRecorded={() => {
+                            setPendingAction(null);
+                            orders.reload();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {pendingAction?.orderId === o.id && pendingAction.kind !== "payment" && (
+                    <tr>
+                      <td colSpan={10} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
                         <StatusActionPopup
                           order={o}
                           action={pendingAction}
@@ -617,41 +699,9 @@ function StatusActionPopup({
   onCancel: () => void;
   onSave: (payload: Record<string, unknown>) => void;
 }) {
-  const amountDue = Number(order.costSummary?.netTotal ?? 0);
-  const [paymentAmount, setPaymentAmount] = useState(order.paymentReceivedAmount ?? String(amountDue));
   const [returnedQuantity, setReturnedQuantity] = useState(order.returnedQuantity ?? "");
   const [refundAmount, setRefundAmount] = useState(order.refundAmount ?? "");
   const [cancellationAmount, setCancellationAmount] = useState(order.cancellationAmount ?? "");
-
-  if (action.kind === "payment") {
-    const amountNum = Number(paymentAmount) || 0;
-    const nextStatus = amountNum <= 0 ? "unpaid" : amountNum >= amountDue ? "paid" : "partially_paid";
-    return (
-      <div style={{ padding: 12 }}>
-        <strong>Mark payment received — {order.orderNumber}</strong>
-        <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "4px 0" }}>Expected (net of discount/shipping/commission): {amountDue.toLocaleString()}</p>
-        {error && <div className="error-banner">{error}</div>}
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          <div className="field" style={{ maxWidth: 200 }}>
-            <label>Amount received</label>
-            <input type="number" min={0} step="0.01" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} />
-          </div>
-          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Will be marked as: {nextStatus.replace("_", " ")}</p>
-        </div>
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button
-            disabled={saving}
-            onClick={() => onSave({ paymentStatus: nextStatus, paymentReceivedAmount: amountNum })}
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
-          <button type="button" className="secondary" onClick={onCancel}>
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (action.kind === "return") {
     return (
@@ -709,5 +759,111 @@ function StatusActionPopup({
         </button>
       </div>
     </div>
+  );
+}
+
+interface PaymentSummary {
+  amountDue: string;
+  amountReceived: string;
+  outstanding: string;
+}
+
+/**
+ * Replaces the old "just set a label" payment popup: this is the real
+ * finance flow — creates + posts the customer receipt and syncs the
+ * order's paymentStatus label in one call (see
+ * POST /sales/orders/:id/record-payment), so there's nothing left to also
+ * enter in Customer Receipts.
+ */
+function PaymentActionPopup({
+  orderId,
+  accounts,
+  onCancel,
+  onRecorded,
+}: {
+  orderId: string;
+  accounts: Account[];
+  onCancel: () => void;
+  onRecorded: () => void;
+}) {
+  const summary = useFetch<PaymentSummary>(`/sales/orders/${orderId}/payment-summary`, [orderId]);
+  const outstanding = Number(summary.data?.outstanding ?? 0);
+
+  const [amount, setAmount] = useState("");
+  const [destinationAccountId, setDestinationAccountId] = useState("");
+  const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [bankReference, setBankReference] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Prefill the amount to the full outstanding balance once it's known —
+  // editable, so a partial payment is just as easy to enter.
+  useEffect(() => {
+    if (summary.data) setAmount((prev) => prev || String(outstanding));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary.data]);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.post(`/sales/orders/${orderId}/record-payment`, {
+        amount: Number(amount),
+        receivedAt: new Date(receivedAt).toISOString(),
+        destinationAccountId,
+        bankReference: bankReference || undefined,
+      });
+      onRecorded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record payment");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ padding: 12 }}>
+      <strong>Record a payment</strong>
+      <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "4px 0" }}>
+        {summary.data
+          ? `Received ${Number(summary.data.amountReceived).toLocaleString()} of ${Number(summary.data.amountDue).toLocaleString()} due — outstanding ${outstanding.toLocaleString()}.`
+          : "Loading balance..."}
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Amount received</label>
+          <input type="number" min={0.01} max={outstanding} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label>Receiving account</label>
+          <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label} ({a.kind})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Payment date</label>
+          <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 200 }}>
+          <label>Reference (optional)</label>
+          <input value={bankReference} onChange={(e) => setBankReference(e.target.value)} placeholder="Bank/transaction ref" />
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button type="submit" disabled={submitting || outstanding <= 0 || !destinationAccountId}>
+          {submitting ? "Recording..." : "Record payment"}
+        </button>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

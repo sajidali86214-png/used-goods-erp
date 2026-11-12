@@ -3,6 +3,7 @@ import { requirePermission } from "../../middleware/rbac.js";
 import {
   getStockSummary,
   getInventoryValuation,
+  getInventoryValueByCategory,
   getPendingReceipts,
   getUnfulfilledOrders,
   getPendingReturns,
@@ -52,6 +53,11 @@ export async function reportRoutes(app: FastifyInstance) {
     "/reports/inventory-valuation",
     { preHandler: requirePermission("cost.view") },
     async () => getInventoryValuation(),
+  );
+  app.get(
+    "/reports/inventory-by-category",
+    { preHandler: requirePermission("cost.view") },
+    async () => getInventoryValueByCategory(),
   );
   app.get(
     "/reports/financial-summary",

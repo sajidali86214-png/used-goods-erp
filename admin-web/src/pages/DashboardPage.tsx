@@ -20,6 +20,18 @@ interface FinancialSummary {
   unsoldInventoryValue: string;
 }
 
+interface CategoryInventoryLine {
+  categoryId: string;
+  categoryName: string;
+  quantityRemaining: string;
+  value: string;
+  contributionPct: string;
+}
+interface CategoryInventory {
+  lines: CategoryInventoryLine[];
+  totalValue: string;
+}
+
 function fmt(n: string | number | undefined) {
   if (n === undefined) return "—";
   return Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
@@ -32,6 +44,7 @@ export function DashboardPage() {
   const unfulfilled = useFetch<unknown[]>(has("order.pick") ? "/reports/unfulfilled-orders" : null);
   const pendingReturns = useFetch<unknown[]>(has("return.process") ? "/reports/pending-returns" : null);
   const financial = useFetch<FinancialSummary>(has("profit.view") ? "/reports/financial-summary" : null);
+  const categoryInventory = useFetch<CategoryInventory>(has("cost.view") ? "/reports/inventory-by-category" : null);
 
   const saleable = stock.data?.find((s) => s.state === "saleable");
 
@@ -50,6 +63,10 @@ export function DashboardPage() {
             <div className="stat-tile">
               <div className="value">{fmt(saleable.availableQty ?? undefined)}</div>
               <div className="label">Available to sell</div>
+            </div>
+            <div className="stat-tile">
+              <div className="value">{fmt(saleable.reservedQty)}</div>
+              <div className="label">Booked (reserved for orders)</div>
             </div>
           </>
         )}
@@ -125,6 +142,33 @@ export function DashboardPage() {
             </div>
           </div>
         </>
+      )}
+
+      {categoryInventory.data && categoryInventory.data.lines.length > 0 && (
+        <div className="panel">
+          <h3>Inventory value by category</h3>
+          <p>Total: {fmt(categoryInventory.data.totalValue)} PKR</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Qty remaining</th>
+                <th>Value (PKR)</th>
+                <th>% of total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {categoryInventory.data.lines.map((l) => (
+                <tr key={l.categoryId}>
+                  <td>{l.categoryName}</td>
+                  <td>{fmt(l.quantityRemaining)}</td>
+                  <td>{fmt(l.value)}</td>
+                  <td>{Number(l.contributionPct)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!has("stock.count") && !has("profit.view") && (
