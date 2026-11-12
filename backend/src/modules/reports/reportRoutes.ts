@@ -4,6 +4,7 @@ import {
   getStockSummary,
   getInventoryValuation,
   getInventoryValueByCategory,
+  getInventoryOverview,
   getPendingReceipts,
   getUnfulfilledOrders,
   getPendingReturns,
@@ -38,6 +39,27 @@ export async function reportRoutes(app: FastifyInstance) {
     "/reports/stock-by-product",
     { preHandler: requirePermission("stock.count") },
     async () => getStockLevelsByProduct(),
+  );
+  app.get(
+    "/reports/inventory-overview",
+    { preHandler: requirePermission("stock.count") },
+    async (request) => {
+      const { categoryId, brandId, gradeId, search, stockStatus } = request.query as {
+        categoryId?: string;
+        brandId?: string;
+        gradeId?: string;
+        search?: string;
+        stockStatus?: "available" | "awaiting_inspection" | "reserved";
+      };
+      return getInventoryOverview({
+        categoryId,
+        brandId,
+        gradeId,
+        search,
+        stockStatus,
+        includeCost: request.authUser!.permissions.has("cost.view"),
+      });
+    },
   );
   app.get(
     "/reports/stock-by-product/:id",

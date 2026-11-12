@@ -4,14 +4,39 @@ import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
+import { downloadCsv, toCsv } from "../lib/csv";
 
-interface ProductStockRow {
+interface GradeBreakdownEntry {
+  gradeCode: string;
+  qty: string;
+}
+interface InventoryOverviewRow {
   productId: string;
   skuCode: string;
   name: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  brandId: string | null;
+  brandName: string | null;
   onHandQty: string;
-  reservedQty: string;
   availableQty: string;
+  reservedQty: string;
+  inspectionQty: string;
+  gradeBreakdown: GradeBreakdownEntry[];
+  avgUnitCost: string | null;
+  totalValue: string | null;
+}
+interface InventoryOverview {
+  rows: InventoryOverviewRow[];
+  totals: { onHandQty: string; availableQty: string; reservedQty: string; inspectionQty: string; totalValue: string | null };
+}
+interface Category {
+  id: string;
+  name: string;
+}
+interface BrandOption {
+  id: string;
+  name: string;
 }
 
 interface StockDetailRow {
@@ -54,64 +79,212 @@ interface Bin {
   label: string;
 }
 
+const ALL = "";
+type StockStatusFilter = "" | "available" | "awaiting_inspection" | "reserved";
+
 export function InventoryPage() {
   const { has } = useAuth();
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebouncedValue(search);
-  const levels = useFetch<ProductStockRow[]>("/reports/stock-by-product");
+  const [categoryId, setCategoryId] = useState(ALL);
+  const [brandId, setBrandId] = useState(ALL);
+  const [gradeId, setGradeId] = useState(ALL);
+  const [stockStatus, setStockStatus] = useState<StockStatusFilter>(ALL);
+
+  const categories = useFetch<Category[]>("/settings/categories");
+  const brands = useFetch<BrandOption[]>("/settings/brands");
+  const grades = useFetch<Grade[]>("/settings/grades");
+
+  const query = new URLSearchParams();
+  if (debouncedSearch) query.set("search", debouncedSearch);
+  if (categoryId) query.set("categoryId", categoryId);
+  if (brandId) query.set("brandId", brandId);
+  if (gradeId) query.set("gradeId", gradeId);
+  if (stockStatus) query.set("stockStatus", stockStatus);
+  const queryString = query.toString();
+
+  const overview = useFetch<InventoryOverview>(
+    `/reports/inventory-overview${queryString ? `?${queryString}` : ""}`,
+    [debouncedSearch, categoryId, brandId, gradeId, stockStatus],
+  );
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
 
-  const filtered = (levels.data ?? []).filter((r) => {
-    if (!debouncedSearch) return true;
-    const q = debouncedSearch.toLowerCase();
-    return r.skuCode.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
-  });
+  // Clearing a selection that no longer matches anything (e.g. brand changed
+  // after category) keeps filters simple — nothing to reconcile manually.
+  const brandsInCategory = categoryId
+    ? new Set((overview.data?.rows ?? []).filter((r) => r.categoryId === categoryId).map((r) => r.brandId))
+    : null;
+
+  function resetFilters() {
+    setSearch("");
+    setCategoryId(ALL);
+    setBrandId(ALL);
+    setGradeId(ALL);
+    setStockStatus(ALL);
+  }
+
+  const activeFilterCount = [debouncedSearch, categoryId, brandId, gradeId, stockStatus].filter(Boolean).length;
+
+  function handleDownload() {
+    const rows = overview.data?.rows ?? [];
+    const columns: { header: string; value: (r: InventoryOverviewRow) => string | number }[] = [
+      { header: "SKU", value: (r) => r.skuCode },
+      { header: "Name", value: (r) => r.name },
+      { header: "Category", value: (r) => r.categoryName ?? "" },
+      { header: "Brand", value: (r) => r.brandName ?? "" },
+      { header: "On hand", value: (r) => r.onHandQty },
+      { header: "Available", value: (r) => r.availableQty },
+      { header: "Reserved", value: (r) => r.reservedQty },
+      { header: "Awaiting inspection", value: (r) => r.inspectionQty },
+      { header: "Grade breakdown", value: (r) => r.gradeBreakdown.map((g) => `${g.gradeCode}:${g.qty}`).join(" ") },
+    ];
+    if (has("cost.view")) {
+      columns.push(
+        { header: "Avg unit cost", value: (r) => r.avgUnitCost ?? "" },
+        { header: "Total value", value: (r) => r.totalValue ?? "" },
+      );
+    }
+    downloadCsv(`inventory-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(rows, columns));
+  }
 
   return (
     <div>
       <h1>Inventory</h1>
 
       <div className="panel">
-        <div className="field" style={{ maxWidth: 320 }}>
-          <label>Search by SKU or name</label>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        {levels.loading && <p>Loading...</p>}
-        {levels.error && <div className="error-banner">{levels.error}</div>}
-        {levels.data && (
-          <table>
-            <thead>
-              <tr>
-                <th>SKU</th>
-                <th>Name</th>
-                <th>On hand</th>
-                <th>Reserved</th>
-                <th>Available (saleable)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => (
-                <tr key={r.productId}>
-                  <td>{r.skuCode}</td>
-                  <td>{r.name}</td>
-                  <td>{Number(r.onHandQty).toLocaleString()}</td>
-                  <td>{Number(r.reservedQty).toLocaleString()}</td>
-                  <td>{Number(r.availableQty).toLocaleString()}</td>
-                  <td>
-                    <button className="secondary" onClick={() => setSelectedProductId(r.productId)}>
-                      View breakdown
-                    </button>
-                  </td>
-                </tr>
+        <div className="form-row">
+          <div className="field" style={{ maxWidth: 260 }}>
+            <label>Search by SKU or name</label>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select value={categoryId} onChange={(e) => { setCategoryId(e.target.value); setBrandId(ALL); }}>
+              <option value={ALL}>All</option>
+              {categories.data?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
               ))}
-              {filtered.length === 0 && (
+            </select>
+          </div>
+          <div className="field">
+            <label>Brand</label>
+            <select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+              <option value={ALL}>All</option>
+              {brands.data
+                ?.filter((b) => !brandsInCategory || brandsInCategory.has(b.id))
+                .map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Grade</label>
+            <select value={gradeId} onChange={(e) => setGradeId(e.target.value)}>
+              <option value={ALL}>All</option>
+              {grades.data?.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.code}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Stock status</label>
+            <select value={stockStatus} onChange={(e) => setStockStatus(e.target.value as StockStatusFilter)}>
+              <option value={ALL}>All</option>
+              <option value="available">Available to sell</option>
+              <option value="awaiting_inspection">Awaiting inspection</option>
+              <option value="reserved">Has reserved stock</option>
+            </select>
+          </div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: 0 }}>
+            {activeFilterCount > 0 ? `${activeFilterCount} filter(s) active` : "Showing all products"}
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            {activeFilterCount > 0 && (
+              <button className="secondary" onClick={resetFilters}>
+                Reset filters
+              </button>
+            )}
+            <button className="secondary" onClick={handleDownload} disabled={!overview.data?.rows.length}>
+              Download CSV
+            </button>
+          </div>
+        </div>
+
+        {overview.loading && <p>Loading...</p>}
+        {overview.error && <div className="error-banner">{overview.error}</div>}
+        {overview.data && (
+          <>
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={6}>No products currently hold stock matching that search.</td>
+                  <th>SKU</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th>Brand</th>
+                  <th>On hand</th>
+                  <th>Available</th>
+                  <th>Reserved</th>
+                  <th>Inspection</th>
+                  <th>Grades</th>
+                  {has("cost.view") && <th>Avg cost</th>}
+                  {has("cost.view") && <th>Value</th>}
+                  <th></th>
                 </tr>
+              </thead>
+              <tbody>
+                {overview.data.rows.map((r) => (
+                  <tr key={r.productId}>
+                    <td>{r.skuCode}</td>
+                    <td>{r.name}</td>
+                    <td>{r.categoryName ?? "—"}</td>
+                    <td>{r.brandName ?? "—"}</td>
+                    <td>{Number(r.onHandQty).toLocaleString()}</td>
+                    <td>{Number(r.availableQty).toLocaleString()}</td>
+                    <td>{Number(r.reservedQty).toLocaleString()}</td>
+                    <td>{Number(r.inspectionQty) > 0 ? Number(r.inspectionQty).toLocaleString() : "—"}</td>
+                    <td style={{ fontSize: 12 }}>
+                      {r.gradeBreakdown.map((g) => `${g.gradeCode}: ${Number(g.qty).toLocaleString()}`).join(", ")}
+                    </td>
+                    {has("cost.view") && <td>{r.avgUnitCost ? Number(r.avgUnitCost).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}</td>}
+                    {has("cost.view") && <td>{r.totalValue ? Number(r.totalValue).toLocaleString() : "—"}</td>}
+                    <td>
+                      <button className="secondary" onClick={() => setSelectedProductId(r.productId)}>
+                        View breakdown
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {overview.data.rows.length === 0 && (
+                  <tr>
+                    <td colSpan={has("cost.view") ? 11 : 9}>No products currently hold stock matching these filters.</td>
+                  </tr>
+                )}
+              </tbody>
+              {overview.data.rows.length > 0 && (
+                <tfoot>
+                  <tr style={{ fontWeight: 600 }}>
+                    <td colSpan={4}>Totals for this selection</td>
+                    <td>{Number(overview.data.totals.onHandQty).toLocaleString()}</td>
+                    <td>{Number(overview.data.totals.availableQty).toLocaleString()}</td>
+                    <td>{Number(overview.data.totals.reservedQty).toLocaleString()}</td>
+                    <td>{Number(overview.data.totals.inspectionQty).toLocaleString()}</td>
+                    <td></td>
+                    {has("cost.view") && <td></td>}
+                    {has("cost.view") && <td>{overview.data.totals.totalValue ? Number(overview.data.totals.totalValue).toLocaleString() : "—"}</td>}
+                    <td></td>
+                  </tr>
+                </tfoot>
               )}
-            </tbody>
-          </table>
+            </table>
+          </>
         )}
       </div>
 
@@ -123,7 +296,7 @@ export function InventoryPage() {
           canWriteOff={has("stock.writeoff")}
           canListIndividual={has("stock.transfer")}
           onClose={() => setSelectedProductId(null)}
-          onChanged={() => levels.reload()}
+          onChanged={() => overview.reload()}
         />
       )}
     </div>

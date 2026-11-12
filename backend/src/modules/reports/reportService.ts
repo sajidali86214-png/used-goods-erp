@@ -117,6 +117,130 @@ export async function getStockLevelsByProduct() {
     .sort((a, b) => a.skuCode.localeCompare(b.skuCode));
 }
 
+/**
+ * The main inventory list view, rebuilt around what the business actually
+ * needs to see at a glance: on-hand vs available vs reserved vs still-in-
+ * inspection, a grade breakdown (A/B/C/Ungraded/mixes) per product, and —
+ * for cost.view only — average landed cost and total value. Supports the
+ * same filters the screen offers (category/brand/grade/stock-status/
+ * search), every filter defaulting to "match everything" so picking just
+ * one doesn't require picking the rest.
+ */
+export async function getInventoryOverview(filters: {
+  categoryId?: string;
+  brandId?: string;
+  gradeId?: string;
+  search?: string;
+  stockStatus?: "available" | "awaiting_inspection" | "reserved";
+  includeCost: boolean;
+}) {
+  const states = await prisma.stockState.findMany({
+    where: {
+      gradeId: filters.gradeId,
+      product: {
+        categoryId: filters.categoryId,
+        brandId: filters.brandId,
+        ...(filters.search
+          ? { OR: [{ name: { contains: filters.search, mode: "insensitive" } }, { skuCode: { contains: filters.search, mode: "insensitive" } }] }
+          : {}),
+      },
+      ...(filters.stockStatus === "awaiting_inspection" ? { state: "inspection" } : {}),
+      ...(filters.stockStatus === "reserved" ? { reservedQty: { gt: 0 } } : {}),
+    },
+    include: {
+      product: { include: { category: true, brand: true } },
+      grade: true,
+      costLayer: filters.includeCost,
+    },
+  });
+
+  interface Bucket {
+    productId: string;
+    skuCode: string;
+    name: string;
+    categoryId: string | null;
+    categoryName: string | null;
+    brandId: string | null;
+    brandName: string | null;
+    onHandQty: Decimal;
+    availableQty: Decimal;
+    reservedQty: Decimal;
+    inspectionQty: Decimal;
+    gradeQty: Map<string, Decimal>;
+    costWeightedTotal: Decimal;
+    costWeightedQty: Decimal;
+  }
+  const byProduct = new Map<string, Bucket>();
+
+  for (const s of states) {
+    const key = s.productId;
+    const bucket =
+      byProduct.get(key) ??
+      ({
+        productId: key,
+        skuCode: s.product.skuCode,
+        name: s.product.name,
+        categoryId: s.product.categoryId,
+        categoryName: s.product.category?.name ?? null,
+        brandId: s.product.brandId,
+        brandName: s.product.brand?.name ?? null,
+        onHandQty: new Decimal(0),
+        availableQty: new Decimal(0),
+        reservedQty: new Decimal(0),
+        inspectionQty: new Decimal(0),
+        gradeQty: new Map<string, Decimal>(),
+        costWeightedTotal: new Decimal(0),
+        costWeightedQty: new Decimal(0),
+      } satisfies Bucket);
+
+    bucket.onHandQty = bucket.onHandQty.plus(s.onHandQty);
+    bucket.reservedQty = bucket.reservedQty.plus(s.reservedQty);
+    if (s.state === "saleable") bucket.availableQty = bucket.availableQty.plus(s.onHandQty.minus(s.reservedQty));
+    if (s.state === "inspection") bucket.inspectionQty = bucket.inspectionQty.plus(s.onHandQty);
+
+    const gradeCode = s.grade.code;
+    bucket.gradeQty.set(gradeCode, (bucket.gradeQty.get(gradeCode) ?? new Decimal(0)).plus(s.onHandQty));
+
+    if (filters.includeCost && s.costLayer) {
+      bucket.costWeightedTotal = bucket.costWeightedTotal.plus(s.onHandQty.times(s.costLayer.unitCost));
+      bucket.costWeightedQty = bucket.costWeightedQty.plus(s.onHandQty);
+    }
+
+    byProduct.set(key, bucket);
+  }
+
+  const rows = [...byProduct.values()]
+    .filter((b) => b.onHandQty.greaterThan(0))
+    .filter((b) => (filters.stockStatus === "available" ? b.availableQty.greaterThan(0) : true))
+    .map((b) => ({
+      productId: b.productId,
+      skuCode: b.skuCode,
+      name: b.name,
+      categoryId: b.categoryId,
+      categoryName: b.categoryName,
+      brandId: b.brandId,
+      brandName: b.brandName,
+      onHandQty: b.onHandQty,
+      availableQty: b.availableQty,
+      reservedQty: b.reservedQty,
+      inspectionQty: b.inspectionQty,
+      gradeBreakdown: [...b.gradeQty.entries()].map(([gradeCode, qty]) => ({ gradeCode, qty })),
+      avgUnitCost: filters.includeCost && b.costWeightedQty.greaterThan(0) ? b.costWeightedTotal.div(b.costWeightedQty) : null,
+      totalValue: filters.includeCost ? b.costWeightedTotal : null,
+    }))
+    .sort((a, b) => a.skuCode.localeCompare(b.skuCode));
+
+  const totals = {
+    onHandQty: sumDecimal(rows.map((r) => r.onHandQty)),
+    availableQty: sumDecimal(rows.map((r) => r.availableQty)),
+    reservedQty: sumDecimal(rows.map((r) => r.reservedQty)),
+    inspectionQty: sumDecimal(rows.map((r) => r.inspectionQty)),
+    totalValue: filters.includeCost ? sumDecimal(rows.map((r) => r.totalValue ?? new Decimal(0))) : null,
+  };
+
+  return { rows, totals };
+}
+
 /** Grade/bin/state breakdown for a single product — the inventory detail drill-down. */
 export async function getProductStockDetail(productId: string) {
   const product = await prisma.product.findUniqueOrThrow({ where: { id: productId } });
