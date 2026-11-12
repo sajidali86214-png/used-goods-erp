@@ -1,8 +1,14 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+
+interface Account {
+  id: string;
+  label: string;
+  kind: string;
+}
 
 interface Grade {
   id: string;
@@ -203,9 +209,10 @@ export function PurchaseOrderDetailPage() {
             </tbody>
           </table>
           <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            Receiving stock never pays the supplier by itself — record advances/invoices/payments from Finance or the Supplier page. This is
-            purely what's already on file for this PO.
+            Receiving stock never pays the supplier by itself — this is purely what's already on file for this PO. Already-paid advances shown
+            above don't need to be re-entered below.
           </p>
+          {has("finance.payment") && <SupplierPaymentForm poId={o.id} supplierId={o.supplier.id} currencyId={o.currencyId} onRecorded={reloadAll} />}
         </div>
       )}
 
@@ -396,5 +403,89 @@ function PurchaseOrderLineRow({
         )}
       </td>
     </tr>
+  );
+}
+
+function SupplierPaymentForm({
+  poId,
+  supplierId,
+  currencyId,
+  onRecorded,
+}: {
+  poId: string;
+  supplierId: string;
+  currencyId: string;
+  onRecorded: () => void;
+}) {
+  const accounts = useFetch<Account[]>("/settings/accounts");
+  const [amount, setAmount] = useState("");
+  const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentMethodAccountId, setPaymentMethodAccountId] = useState("");
+  const [reference, setReference] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setSubmitting(true);
+    try {
+      const advance = await api.post<{ id: string }>("/purchasing/advances", {
+        supplierId,
+        poId,
+        currencyId,
+        amount: Number(amount),
+        paidAt: new Date(paidAt).toISOString(),
+        paymentMethodAccountId,
+        reference: reference || undefined,
+      });
+      await api.post(`/finance/post/supplier-advances/${advance.id}`);
+      setSuccess("Payment recorded and posted — it's already linked to this PO, no need to re-enter it elsewhere.");
+      setAmount("");
+      setReference("");
+      onRecorded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record payment");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+      <h4 style={{ marginBottom: 6 }}>Record a payment</h4>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <div className="form-row">
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Amount</label>
+          <input type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label>Paying account</label>
+          <select value={paymentMethodAccountId} onChange={(e) => setPaymentMethodAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.data?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label} ({a.kind})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Date</label>
+          <input type="date" value={paidAt} onChange={(e) => setPaidAt(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 200 }}>
+          <label>Reference (optional)</label>
+          <input value={reference} onChange={(e) => setReference(e.target.value)} />
+        </div>
+      </div>
+      <button type="submit" disabled={submitting || !paymentMethodAccountId}>
+        {submitting ? "Recording..." : "Record payment"}
+      </button>
+    </form>
   );
 }
