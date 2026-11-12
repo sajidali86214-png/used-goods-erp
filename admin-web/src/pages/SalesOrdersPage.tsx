@@ -180,6 +180,7 @@ export function SalesOrdersPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [fulfilmentNotice, setFulfilmentNotice] = useState<string | null>(null);
 
   async function handleQcChange(orderId: string, qcStatus: string) {
     setStatusError(null);
@@ -193,6 +194,7 @@ export function SalesOrdersPage() {
 
   async function handleFulfilmentChange(orderId: string, fulfilmentStatus: string) {
     setStatusError(null);
+    setFulfilmentNotice(null);
     if (fulfilmentStatus === "returned") {
       setPendingAction({ orderId, kind: "return" });
       return;
@@ -202,7 +204,18 @@ export function SalesOrdersPage() {
       return;
     }
     try {
-      await api.patch(`/sales/orders/${orderId}/status`, { fulfilmentStatus });
+      const result = await api.patch<{
+        fulfilmentAutomation?: { fulfilled: { lineId: string; quantity: string }[]; skipped: { lineId: string; reason: string }[] };
+      }>(`/sales/orders/${orderId}/status`, { fulfilmentStatus });
+      const automation = result.fulfilmentAutomation;
+      if (automation) {
+        const fulfilledTotal = automation.fulfilled.reduce((sum, f) => sum + Number(f.quantity), 0);
+        const parts = [
+          fulfilledTotal > 0 && `${fulfilledTotal} piece(s) auto-reserved, picked, dispatched, and posted to the ledger`,
+          automation.skipped.length > 0 && `${automation.skipped.length} line(s) need attention: ${automation.skipped.map((s) => s.reason).join("; ")}`,
+        ].filter(Boolean);
+        if (parts.length > 0) setFulfilmentNotice(parts.join(" — "));
+      }
       orders.reload();
     } catch (err) {
       setStatusError(err instanceof ApiError ? err.message : "Could not update fulfilment status");
@@ -333,6 +346,8 @@ export function SalesOrdersPage() {
       </div>
 
       {successMessage && !showForm && <div className="panel success-banner">{successMessage}</div>}
+      {fulfilmentNotice && <div className="panel success-banner">{fulfilmentNotice}</div>}
+      {statusError && !pendingAction && <div className="panel error-banner">{statusError}</div>}
 
       {showForm && (
         <form className="panel" onSubmit={handleCreate}>
@@ -651,6 +666,7 @@ export function SalesOrdersPage() {
                         <StatusActionPopup
                           order={o}
                           action={pendingAction}
+                          accounts={accounts.data ?? []}
                           error={statusError}
                           saving={statusSaving}
                           onCancel={() => {
@@ -661,8 +677,12 @@ export function SalesOrdersPage() {
                             setStatusSaving(true);
                             setStatusError(null);
                             try {
-                              await api.patch(`/sales/orders/${o.id}/status`, payload);
-                              setPendingAction(null);
+                              const result = await api.patch<{ refundError?: string }>(`/sales/orders/${o.id}/status`, payload);
+                              if (result.refundError) {
+                                setStatusError(`Status saved, but the refund could not be posted: ${result.refundError}`);
+                              } else {
+                                setPendingAction(null);
+                              }
                               orders.reload();
                             } catch (err) {
                               setStatusError(err instanceof ApiError ? err.message : "Could not save");
@@ -687,6 +707,7 @@ export function SalesOrdersPage() {
 function StatusActionPopup({
   order,
   action,
+  accounts,
   error,
   saving,
   onCancel,
@@ -694,6 +715,7 @@ function StatusActionPopup({
 }: {
   order: SalesOrder;
   action: PendingAction;
+  accounts: Account[];
   error: string | null;
   saving: boolean;
   onCancel: () => void;
@@ -702,8 +724,10 @@ function StatusActionPopup({
   const [returnedQuantity, setReturnedQuantity] = useState(order.returnedQuantity ?? "");
   const [refundAmount, setRefundAmount] = useState(order.refundAmount ?? "");
   const [cancellationAmount, setCancellationAmount] = useState(order.cancellationAmount ?? "");
+  const [refundAccountId, setRefundAccountId] = useState("");
 
   if (action.kind === "return") {
+    const refundAmountNum = Number(refundAmount) || 0;
     return (
       <div style={{ padding: 12 }}>
         <strong>Mark returned — {order.orderNumber}</strong>
@@ -717,15 +741,29 @@ function StatusActionPopup({
             <label>Refund amount</label>
             <input type="number" min={0} step="0.01" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value)} />
           </div>
+          {refundAmountNum > 0 && (
+            <div className="field" style={{ maxWidth: 220 }}>
+              <label>Refund from account</label>
+              <select value={refundAccountId} onChange={(e) => setRefundAccountId(e.target.value)} required>
+                <option value="">Select...</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label} ({a.kind})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <button
-            disabled={saving}
+            disabled={saving || (refundAmountNum > 0 && !refundAccountId)}
             onClick={() =>
               onSave({
                 fulfilmentStatus: "returned",
                 returnedQuantity: Number(returnedQuantity) || 0,
-                refundAmount: Number(refundAmount) || 0,
+                refundAmount: refundAmountNum,
+                refundAccountId: refundAmountNum > 0 ? refundAccountId : undefined,
               })
             }
           >
@@ -735,22 +773,48 @@ function StatusActionPopup({
             Cancel
           </button>
         </div>
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+          A refund amount posts a real, linked refund from the chosen account. The pieces returned label does not move stock automatically — use
+          the detailed Returns workflow to put inventory back into a specific grade.
+        </p>
       </div>
     );
   }
 
+  const cancellationAmountNum = Number(cancellationAmount) || 0;
   return (
     <div style={{ padding: 12 }}>
       <strong>Cancel order — {order.orderNumber}</strong>
       {error && <div className="error-banner">{error}</div>}
-      <div className="field" style={{ maxWidth: 200, marginTop: 6 }}>
-        <label>Cancellation amount (refunded, if any)</label>
-        <input type="number" min={0} step="0.01" value={cancellationAmount} onChange={(e) => setCancellationAmount(e.target.value)} />
+      <div className="form-row" style={{ marginTop: 6 }}>
+        <div className="field" style={{ maxWidth: 200 }}>
+          <label>Cancellation amount (refunded, if any)</label>
+          <input type="number" min={0} step="0.01" value={cancellationAmount} onChange={(e) => setCancellationAmount(e.target.value)} />
+        </div>
+        {cancellationAmountNum > 0 && (
+          <div className="field" style={{ maxWidth: 220 }}>
+            <label>Refund from account</label>
+            <select value={refundAccountId} onChange={(e) => setRefundAccountId(e.target.value)} required>
+              <option value="">Select...</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label} ({a.kind})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <button
-          disabled={saving}
-          onClick={() => onSave({ fulfilmentStatus: "cancelled", cancellationAmount: Number(cancellationAmount) || 0 })}
+          disabled={saving || (cancellationAmountNum > 0 && !refundAccountId)}
+          onClick={() =>
+            onSave({
+              fulfilmentStatus: "cancelled",
+              cancellationAmount: cancellationAmountNum,
+              refundAccountId: cancellationAmountNum > 0 ? refundAccountId : undefined,
+            })
+          }
         >
           {saving ? "Saving..." : "Save"}
         </button>

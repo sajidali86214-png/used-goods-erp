@@ -18,7 +18,8 @@ import { dispatchPickAllocation } from "./dispatchService.js";
 import { cancelReservedOrPickedQuantity } from "./cancellationService.js";
 import { createReturnRequest, receiveReturnLine, inspectReturnLine } from "./returnService.js";
 import { createRefund, markRefundPaid } from "./refundService.js";
-import { recordSalesOrderPayment } from "../finance/paymentService.js";
+import { recordSalesOrderPayment, recordSalesOrderRefund } from "../finance/paymentService.js";
+import { autoFulfilAndDispatchOrder } from "./fulfilmentAutomationService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createOrderSchema = z.object({
@@ -76,6 +77,10 @@ const updateOrderStatusSchema = z.object({
   returnedQuantity: z.number().nonnegative().optional(),
   refundAmount: z.number().nonnegative().optional(),
   cancellationAmount: z.number().nonnegative().optional(),
+  // When a refund/cancellation amount is given, this is the account it
+  // actually paid out from — required to post a real, linked refund
+  // instead of just recording the amount as a label.
+  refundAccountId: z.string().uuid().optional(),
 });
 
 const updateOrderLineSchema = z.object({
@@ -292,6 +297,10 @@ export async function salesRoutes(app: FastifyInstance) {
 
   // Manual status labels — always available regardless of payment status,
   // unlike updateOrder/updateOrderLine above (no transition rules enforced).
+  // Setting fulfilmentStatus to "dispatched" or "delivered" additionally
+  // runs the real reserve/pick/dispatch/post pipeline behind the scenes
+  // (see fulfilmentAutomationService) so the simple label still produces a
+  // real stock movement and a real ledger posting — not just a label.
   app.patch(
     "/sales/orders/:id/status",
     { preHandler: requirePermission("order.create") },
@@ -299,7 +308,27 @@ export async function salesRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const body = updateOrderStatusSchema.parse(request.body);
       const order = await updateOrderStatus(id, body);
-      return reply.send(order);
+
+      let fulfilmentAutomation: { fulfilled: { lineId: string; quantity: string }[]; skipped: { lineId: string; reason: string }[] } | undefined;
+      if (body.fulfilmentStatus === "dispatched" || body.fulfilmentStatus === "delivered") {
+        try {
+          fulfilmentAutomation = await autoFulfilAndDispatchOrder(id, request.authUser!.id);
+        } catch (err) {
+          fulfilmentAutomation = { fulfilled: [], skipped: [{ lineId: "*", reason: err instanceof Error ? err.message : "automation failed" }] };
+        }
+      }
+
+      const refundAmount = body.refundAmount ?? body.cancellationAmount;
+      let refundError: string | undefined;
+      if (refundAmount && refundAmount > 0 && body.refundAccountId) {
+        try {
+          await recordSalesOrderRefund({ orderId: id, amount: refundAmount, paymentMethodAccountId: body.refundAccountId });
+        } catch (err) {
+          refundError = err instanceof Error ? err.message : "Could not post the refund";
+        }
+      }
+
+      return reply.send({ ...order, fulfilmentAutomation, refundError });
     },
   );
 

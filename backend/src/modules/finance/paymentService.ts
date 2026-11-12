@@ -1,7 +1,8 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertNonNegative, sumDecimal } from "../../lib/money.js";
 import { lockExchangeRate } from "./currencyService.js";
-import { postCustomerReceipt } from "./ledgerService.js";
+import { postCustomerReceipt, postRefund } from "./ledgerService.js";
+import { createRefund, markRefundPaid } from "../sales/refundService.js";
 import { getOrderPaymentSummary, updateOrderStatus } from "../sales/salesOrderService.js";
 
 interface AllocationInput {
@@ -143,4 +144,28 @@ export async function recordSalesOrderPayment(params: {
   }
 
   return { receipt, paymentSummary: after, order: order2 };
+}
+
+/**
+ * One-step "record a sales order refund": creates the Refund, marks it
+ * paid from the chosen account, and posts it to the ledger (Dr Sales
+ * Returns, Cr that account) — used by the quick "mark returned"/"cancel"
+ * popups so an entered refund amount actually produces a real, posted
+ * financial event instead of just a label. Deliberately does NOT attempt
+ * to guess which lot/grade the returned pieces go back to — that stays a
+ * manual, deliberate action via the detailed returns flow, since guessing
+ * it here risks silently misstating stock.
+ */
+export async function recordSalesOrderRefund(params: {
+  orderId: string;
+  amount: Decimal | number;
+  paymentMethodAccountId: string;
+}) {
+  const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: params.orderId } });
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+
+  const refund = await createRefund({ orderId: order.id, amount: params.amount, currencyId: pkr.id });
+  await markRefundPaid(refund.id, params.paymentMethodAccountId);
+  await postRefund(refund.id);
+  return refund;
 }
