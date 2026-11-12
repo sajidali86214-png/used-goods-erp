@@ -15,6 +15,18 @@ interface Product {
   skuCode: string;
   name: string;
 }
+interface Category {
+  id: string;
+  name: string;
+}
+interface Brand {
+  id: string;
+  name: string;
+}
+interface Currency {
+  id: string;
+  code: string;
+}
 interface Grade {
   id: string;
   code: string;
@@ -64,11 +76,17 @@ export function PurchasingPage() {
   const suppliers = useFetch<Supplier[]>("/suppliers");
   const products = useFetch<Product[]>("/products");
   const grades = useFetch<Grade[]>("/settings/grades");
+  const categories = useFetch<Category[]>("/settings/categories");
+  const brands = useFetch<Brand[]>("/settings/brands");
+  const currencies = useFetch<Currency[]>("/settings/currencies");
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [draft, setDraft, clearDraft] = useDraft<NewPODraft>("new-po", emptyPODraft());
   const { showNewPO, supplierId, lines } = draft;
+
+  const [showNewSupplier, setShowNewSupplier] = useState(false);
+  const [newProductForLine, setNewProductForLine] = useState<number | null>(null);
 
   const selectedSupplier = suppliers.data?.find((s) => s.id === supplierId);
 
@@ -162,29 +180,58 @@ export function PurchasingPage() {
               <div className="form-row">
                 <div className="field">
                   <label>Supplier</label>
-                  <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required>
-                    <option value="">Select...</option>
-                    {suppliers.data?.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Line items — add a grade mix when you already know what you're ordering (e.g. a supplier's pre-sorted AB or C bale).</p>
-              {lines.map((line, index) => (
-                <div className="form-row" key={index}>
-                  <div className="field">
-                    <label>Product</label>
-                    <select value={line.productId} onChange={(e) => updateLine(index, { productId: e.target.value })} required>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <select value={supplierId} onChange={(e) => setSupplierId(e.target.value)} required style={{ flex: 1 }}>
                       <option value="">Select...</option>
-                      {products.data?.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.skuCode} — {p.name}
+                      {suppliers.data?.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
                         </option>
                       ))}
                     </select>
+                    <button type="button" className="secondary" onClick={() => setShowNewSupplier((v) => !v)}>
+                      {showNewSupplier ? "Cancel" : "+ New"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {showNewSupplier && (
+                <NewSupplierPanel
+                  currencies={currencies.data ?? []}
+                  onCreated={(supplier) => {
+                    suppliers.reload();
+                    setSupplierId(supplier.id);
+                    setShowNewSupplier(false);
+                  }}
+                  onCancel={() => setShowNewSupplier(false)}
+                />
+              )}
+
+              <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Line items — add a grade mix when you already know what you're ordering (e.g. a supplier's pre-sorted AB or C bale).</p>
+              {lines.map((line, index) => (
+                <div key={index}>
+                <div className="form-row">
+                  <div className="field">
+                    <label>Product</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <select
+                        value={line.productId}
+                        onChange={(e) => updateLine(index, { productId: e.target.value })}
+                        required
+                        style={{ flex: 1 }}
+                      >
+                        <option value="">Select...</option>
+                        {products.data?.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.skuCode} — {p.name}
+                          </option>
+                        ))}
+                      </select>
+                      <button type="button" className="secondary" onClick={() => setNewProductForLine((v) => (v === index ? null : index))}>
+                        {newProductForLine === index ? "Cancel" : "+ New"}
+                      </button>
+                    </div>
                   </div>
                   <div className="field">
                     <label>Grade mix</label>
@@ -232,6 +279,19 @@ export function PurchasingPage() {
                       </button>
                     </div>
                   )}
+                </div>
+                {newProductForLine === index && (
+                  <NewProductPanel
+                    categories={categories.data ?? []}
+                    brands={brands.data ?? []}
+                    onCreated={(product) => {
+                      products.reload();
+                      updateLine(index, { productId: product.id });
+                      setNewProductForLine(null);
+                    }}
+                    onCancel={() => setNewProductForLine(null)}
+                  />
+                )}
                 </div>
               ))}
               <div style={{ marginBottom: 12 }}>
@@ -300,8 +360,171 @@ export function PurchasingPage() {
       )}
 
       {tab === "receive" && (
-        <ReceiveGrnForm pos={pos.data ?? []} products={products.data ?? []} grades={grades.data ?? []} onReceived={pos.reload} />
+        <ReceiveGrnForm
+          pos={pos.data ?? []}
+          products={products.data ?? []}
+          grades={grades.data ?? []}
+          categories={categories.data ?? []}
+          brands={brands.data ?? []}
+          onReceived={pos.reload}
+          onProductCreated={products.reload}
+        />
       )}
+    </div>
+  );
+}
+
+function NewSupplierPanel({
+  currencies,
+  onCreated,
+  onCancel,
+}: {
+  currencies: Currency[];
+  onCreated: (supplier: Supplier) => void;
+  onCancel: () => void;
+}) {
+  const pkr = currencies.find((c) => c.code === "PKR");
+  const [name, setName] = useState("");
+  const [contactPerson, setContactPerson] = useState("");
+  const [phone, setPhone] = useState("");
+  const [defaultCurrencyId, setDefaultCurrencyId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setError(null);
+    setSaving(true);
+    try {
+      const created = await api.post<Supplier>("/suppliers", {
+        name,
+        defaultCurrencyId: defaultCurrencyId || pkr?.id,
+        contactPerson: contactPerson || undefined,
+        phone: phone || undefined,
+      });
+      onCreated(created);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not create supplier");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <h4 style={{ marginTop: 0 }}>New supplier</h4>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field">
+          <label>Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Contact person</label>
+          <input value={contactPerson} onChange={(e) => setContactPerson(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Phone</label>
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Currency</label>
+          <select value={defaultCurrencyId} onChange={(e) => setDefaultCurrencyId(e.target.value)}>
+            <option value="">{pkr ? `${pkr.code} (default)` : "Select..."}</option>
+            {currencies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.code}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" disabled={saving || !name} onClick={handleSave}>
+          {saving ? "Saving..." : "Save supplier"}
+        </button>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NewProductPanel({
+  categories,
+  brands,
+  onCreated,
+  onCancel,
+}: {
+  categories: Category[];
+  brands: Brand[];
+  onCreated: (product: Product) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [brandId, setBrandId] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSave() {
+    setError(null);
+    setSaving(true);
+    try {
+      const created = await api.post<Product>("/products", {
+        name,
+        categoryId,
+        brandId: brandId || undefined,
+      });
+      onCreated(created);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not create product");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="panel" style={{ marginBottom: 12 }}>
+      <h4 style={{ marginTop: 0 }}>New product</h4>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>The SKU code is assigned automatically from the category.</p>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field">
+          <label>Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Category</label>
+          <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+            <option value="">Select...</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Brand (optional)</label>
+          <select value={brandId} onChange={(e) => setBrandId(e.target.value)}>
+            <option value="">No brand</option>
+            {brands.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" disabled={saving || !name || !categoryId} onClick={handleSave}>
+          {saving ? "Saving..." : "Save product"}
+        </button>
+        <button type="button" className="secondary" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -310,10 +533,6 @@ interface Bin {
   id: string;
   code: string;
   label: string;
-}
-interface Currency {
-  id: string;
-  code: string;
 }
 interface PoStatusLine {
   lineId: string;
@@ -351,12 +570,18 @@ function ReceiveGrnForm({
   pos,
   products,
   grades,
+  categories,
+  brands,
   onReceived,
+  onProductCreated,
 }: {
   pos: PurchaseOrder[];
   products: Product[];
   grades: Grade[];
+  categories: Category[];
+  brands: Brand[];
   onReceived: () => void;
+  onProductCreated: () => void;
 }) {
   const bins = useFetch<Bin[]>("/settings/bins");
   const currencies = useFetch<Currency[]>("/settings/currencies");
@@ -368,6 +593,7 @@ function ReceiveGrnForm({
   const [success, setSuccess] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [loadingPoLines, setLoadingPoLines] = useState(false);
+  const [newProductForLine, setNewProductForLine] = useState<number | null>(null);
 
   const selectedPo = pos.find((p) => p.id === poId);
 
@@ -511,22 +737,31 @@ function ReceiveGrnForm({
       {loadingPoLines && <p>Loading PO lines...</p>}
 
       {lines.map((line, index) => (
-        <div className="form-row" key={index}>
+        <div key={index}>
+        <div className="form-row">
           <div className="field">
             <label>Product</label>
-            <select
-              value={line.productId}
-              onChange={(e) => updateLine(index, { productId: e.target.value })}
-              required
-              disabled={!!line.poLineId}
-            >
-              <option value="">Select...</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.skuCode} — {p.name}
-                </option>
-              ))}
-            </select>
+            <div style={{ display: "flex", gap: 6 }}>
+              <select
+                value={line.productId}
+                onChange={(e) => updateLine(index, { productId: e.target.value })}
+                required
+                disabled={!!line.poLineId}
+                style={{ flex: 1 }}
+              >
+                <option value="">Select...</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.skuCode} — {p.name}
+                  </option>
+                ))}
+              </select>
+              {!line.poLineId && (
+                <button type="button" className="secondary" onClick={() => setNewProductForLine((v) => (v === index ? null : index))}>
+                  {newProductForLine === index ? "Cancel" : "+ New"}
+                </button>
+              )}
+            </div>
           </div>
           <div className="field">
             <label>Grade received</label>
@@ -572,6 +807,19 @@ function ReceiveGrnForm({
               </button>
             </div>
           )}
+        </div>
+        {newProductForLine === index && (
+          <NewProductPanel
+            categories={categories}
+            brands={brands}
+            onCreated={(product) => {
+              onProductCreated();
+              updateLine(index, { productId: product.id });
+              setNewProductForLine(null);
+            }}
+            onCancel={() => setNewProductForLine(null)}
+          />
+        )}
         </div>
       ))}
       <div style={{ marginBottom: 12 }}>
