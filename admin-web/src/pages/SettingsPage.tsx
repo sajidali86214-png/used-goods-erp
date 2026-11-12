@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useState, Fragment, type ChangeEvent, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 
@@ -368,17 +368,32 @@ interface InvestorRow {
   id: string;
   name: string;
   profitSharePercent: string;
+  profitShareBasis: string;
   isActive: boolean;
   user: UserOption | null;
 }
+interface InvestorTransactionRow {
+  id: string;
+  type: "contribution" | "withdrawal" | "distribution";
+  amount: string;
+  occurredAt: string;
+  notes: string | null;
+}
+
+const BASIS_OPTIONS: { value: string; label: string }[] = [
+  { value: "operating_result", label: "Operating result (gross profit − operating expenses)" },
+  { value: "gross_profit", label: "Gross profit (net sales − COGS)" },
+];
 
 function InvestorsTab() {
   const investors = useFetch<InvestorRow[]>("/investors");
   const users = useFetch<UserOption[]>("/users");
   const [name, setName] = useState("");
   const [profitSharePercent, setProfitSharePercent] = useState("");
+  const [profitShareBasis, setProfitShareBasis] = useState("operating_result");
   const [userId, setUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [expandedInvestorId, setExpandedInvestorId] = useState<string | null>(null);
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -387,6 +402,7 @@ function InvestorsTab() {
       await api.post("/investors", {
         name,
         profitSharePercent: Number(profitSharePercent),
+        profitShareBasis,
         userId: userId || undefined,
       });
       setName("");
@@ -402,8 +418,8 @@ function InvestorsTab() {
     <div className="panel">
       <h3>Investors</h3>
       <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
-        Each investor here with a login attached sees only their own Investor Dashboard (profit share, inventory value, expenses) — nothing else in the
-        app. Create their login first on the Users page with the "investor" role, then link it here.
+        Each investor here with a login attached sees only their own Investor Dashboard — nothing else in the app. Create their login first on the
+        Users page with the "investor" role, then link it here.
       </p>
       {error && <div className="error-banner">{error}</div>}
       <form onSubmit={handleCreate} className="form-row" style={{ alignItems: "flex-end" }}>
@@ -414,6 +430,16 @@ function InvestorsTab() {
         <div className="field">
           <label>Profit share %</label>
           <input type="number" min={0} max={100} step="0.01" value={profitSharePercent} onChange={(e) => setProfitSharePercent(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Share basis</label>
+          <select value={profitShareBasis} onChange={(e) => setProfitShareBasis(e.target.value)}>
+            {BASIS_OPTIONS.map((b) => (
+              <option key={b.value} value={b.value}>
+                {b.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="field">
           <label>Linked login (optional)</label>
@@ -436,24 +462,126 @@ function InvestorsTab() {
             <tr>
               <th>Name</th>
               <th>Share %</th>
+              <th>Basis</th>
               <th>Login</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
             {investors.data.map((inv) => (
-              <tr key={inv.id}>
-                <td>{inv.name}</td>
-                <td>{Number(inv.profitSharePercent)}%</td>
-                <td>{inv.user ? `${inv.user.name} (${inv.user.email})` : "— not linked —"}</td>
-                <td>
-                  <span className="badge">{inv.isActive ? "active" : "inactive"}</span>
-                </td>
+              <Fragment key={inv.id}>
+                <tr>
+                  <td>{inv.name}</td>
+                  <td>{Number(inv.profitSharePercent)}%</td>
+                  <td style={{ fontSize: 12 }}>{BASIS_OPTIONS.find((b) => b.value === inv.profitShareBasis)?.label ?? inv.profitShareBasis}</td>
+                  <td>{inv.user ? `${inv.user.name} (${inv.user.email})` : "— not linked —"}</td>
+                  <td>
+                    <span className="badge">{inv.isActive ? "active" : "inactive"}</span>
+                  </td>
+                  <td>
+                    <button className="secondary" onClick={() => setExpandedInvestorId((v) => (v === inv.id ? null : inv.id))}>
+                      {expandedInvestorId === inv.id ? "Hide" : "Capital movements"}
+                    </button>
+                  </td>
+                </tr>
+                {expandedInvestorId === inv.id && (
+                  <tr>
+                    <td colSpan={6}>
+                      <InvestorTransactionsPanel investorId={inv.id} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function InvestorTransactionsPanel({ investorId }: { investorId: string }) {
+  const transactions = useFetch<InvestorTransactionRow[]>(`/investors/${investorId}/transactions`, [investorId]);
+  const [type, setType] = useState<"contribution" | "withdrawal" | "distribution">("contribution");
+  const [amount, setAmount] = useState("");
+  const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleRecord(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await api.post(`/investors/${investorId}/transactions`, {
+        type,
+        amount: Number(amount),
+        occurredAt: new Date(occurredAt).toISOString(),
+        notes: notes || undefined,
+      });
+      setAmount("");
+      setNotes("");
+      transactions.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record transaction");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: "8px 0" }}>
+      {error && <div className="error-banner">{error}</div>}
+      <form onSubmit={handleRecord} className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field">
+          <label>Type</label>
+          <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+            <option value="contribution">Contribution (capital in)</option>
+            <option value="withdrawal">Withdrawal (capital out)</option>
+            <option value="distribution">Distribution (profit share paid out)</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Amount (PKR)</label>
+          <input type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Date</label>
+          <input type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Notes (optional)</label>
+          <input value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+        <button type="submit" disabled={saving} style={{ height: 36 }}>
+          {saving ? "Saving..." : "Record"}
+        </button>
+      </form>
+      {transactions.data && transactions.data.length > 0 && (
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {transactions.data.map((t) => (
+              <tr key={t.id}>
+                <td>{new Date(t.occurredAt).toLocaleDateString()}</td>
+                <td>{t.type}</td>
+                <td>{Number(t.amount).toLocaleString()}</td>
+                <td>{t.notes ?? "—"}</td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+      {transactions.data && transactions.data.length === 0 && <p style={{ color: "var(--text-muted)", fontSize: 12 }}>No capital movements recorded yet.</p>}
     </div>
   );
 }

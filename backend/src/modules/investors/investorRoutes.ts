@@ -2,19 +2,35 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
 import { prisma } from "../../lib/prisma.js";
-import { listInvestors, createInvestor, updateInvestor, getInvestorDashboard } from "./investorService.js";
+import {
+  listInvestors,
+  createInvestor,
+  updateInvestor,
+  getInvestorDashboard,
+  recordInvestorTransaction,
+  listInvestorTransactions,
+} from "./investorService.js";
 
 const createInvestorSchema = z.object({
   name: z.string().min(1),
   profitSharePercent: z.number().min(0).max(100),
+  profitShareBasis: z.enum(["gross_profit", "operating_result"]).optional(),
   userId: z.string().uuid().optional(),
 });
 
 const updateInvestorSchema = z.object({
   name: z.string().min(1).optional(),
   profitSharePercent: z.number().min(0).max(100).optional(),
+  profitShareBasis: z.enum(["gross_profit", "operating_result"]).optional(),
   userId: z.string().uuid().nullable().optional(),
   isActive: z.boolean().optional(),
+});
+
+const investorTransactionSchema = z.object({
+  type: z.enum(["contribution", "withdrawal", "distribution"]),
+  amount: z.number().positive(),
+  occurredAt: z.coerce.date().optional(),
+  notes: z.string().optional(),
 });
 
 export async function investorRoutes(app: FastifyInstance) {
@@ -32,6 +48,26 @@ export async function investorRoutes(app: FastifyInstance) {
     const body = updateInvestorSchema.parse(request.body);
     return updateInvestor(id, body);
   });
+
+  app.post(
+    "/investors/:id/transactions",
+    { preHandler: requirePermission("settings.manage") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = investorTransactionSchema.parse(request.body);
+      const tx = await recordInvestorTransaction({ investorId: id, ...body });
+      return reply.code(201).send(tx);
+    },
+  );
+
+  app.get(
+    "/investors/:id/transactions",
+    { preHandler: requirePermission("settings.manage") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return listInvestorTransactions(id);
+    },
+  );
 
   // The restricted portal itself. A logged-in investor sees only their own
   // dashboard (resolved from their own user id) — an investorId query param

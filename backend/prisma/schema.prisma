@@ -47,14 +47,34 @@ model User {
 
 // Restricted investor portal access: links a login to an agreed profit share.
 model Investor {
-  id                  String    @id @default(uuid())
-  name                String
-  profitSharePercent  Decimal   @db.Decimal(6, 3)
-  userId              String?   @unique
-  isActive            Boolean   @default(true)
-  createdAt           DateTime  @default(now())
+  id                 String   @id @default(uuid())
+  name               String
+  profitSharePercent Decimal  @db.Decimal(6, 3)
+  // Which figure the % applies to — explicit and shown on the dashboard,
+  // never silently assumed. "gross_profit" = net sales - COGS; operating_result
+  // additionally deducts posted operating expenses.
+  profitShareBasis   String   @default("operating_result") // gross_profit | operating_result
+  userId             String?  @unique
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
 
-  user User? @relation(fields: [userId], references: [id])
+  user         User?                 @relation(fields: [userId], references: [id])
+  transactions InvestorTransaction[]
+}
+
+// Investor capital movements — never cash-available-for-distribution by
+// itself; the dashboard always shows this alongside (not instead of) the
+// calculated profit share, so nothing here ever stands in for an estimate.
+model InvestorTransaction {
+  id         String   @id @default(uuid())
+  investorId String
+  type       String // contribution | withdrawal | distribution
+  amount     Decimal  @db.Decimal(18, 4)
+  occurredAt DateTime @default(now())
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  investor Investor @relation(fields: [investorId], references: [id])
 }
 
 // Small singleton key/value store for app-wide config (e.g. the letterhead image) — not a per-user preference.
