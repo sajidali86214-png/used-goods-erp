@@ -11,7 +11,14 @@ export function useDraft<T>(key: string, initial: T) {
   const [state, setState] = useState<T>(() => {
     try {
       const raw = localStorage.getItem(storageKey);
-      return raw ? (JSON.parse(raw) as T) : initial;
+      if (!raw) return initial;
+      const parsed = JSON.parse(raw) as T;
+      // A shallow merge over `initial` — not the raw parsed value — so a
+      // draft saved under an older shape (a field renamed, added, or turned
+      // into an array by a later change to this form) still produces a
+      // valid object instead of crashing the page with a missing field.
+      // Only safe for object-shaped drafts, which every call site here is.
+      return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? { ...initial, ...parsed } : initial;
     } catch {
       return initial;
     }
