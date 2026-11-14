@@ -20,6 +20,7 @@ import { createReturnRequest, receiveReturnLine, inspectReturnLine } from "./ret
 import { createRefund, markRefundPaid } from "./refundService.js";
 import { recordSalesOrderPayment, recordSalesOrderRefund } from "../finance/paymentService.js";
 import { autoFulfilAndDispatchOrder } from "./fulfilmentAutomationService.js";
+import { postSaleDispatch } from "../finance/ledgerService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createOrderSchema = z.object({
@@ -417,6 +418,11 @@ export async function salesRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = dispatchSchema.parse(request.body);
       const result = await dispatchPickAllocation({ ...body, actorUserId: request.authUser!.id });
+      // Revenue/COGS recognition must follow dispatch automatically — this is
+      // the manual grade-picker path (restricted-grade lines), the one case
+      // autoFulfilAndDispatchOrder deliberately leaves alone; without this it
+      // would silently repeat the "no transaction showing in accounts" bug.
+      await postSaleDispatch(result.shipmentLine.id);
       return reply.code(201).send(result);
     },
   );

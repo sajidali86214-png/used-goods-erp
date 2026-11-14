@@ -13,7 +13,6 @@ import { autoFulfilAndDispatchOrder } from "../src/modules/sales/fulfilmentAutom
 import { recordCustomerReceipt } from "../src/modules/finance/paymentService.js";
 import { postCustomerReceipt } from "../src/modules/finance/ledgerService.js";
 import { lockExchangeRate } from "../src/modules/finance/currencyService.js";
-import { getOrderPaymentSummary } from "../src/modules/sales/salesOrderService.js";
 
 async function main() {
   const ownerEmail = process.env.SEED_OWNER_EMAIL ?? "owner@example.com";
@@ -74,7 +73,6 @@ async function main() {
         await prisma.salesOrder.update({ where: { id: order.id }, data: { paymentReceivedAmount: null } });
         console.log(`  payment: posted a real receipt for ${amount.toString()} into ${defaultAccount.label}`);
       }
-      void summary;
     }
   }
 
