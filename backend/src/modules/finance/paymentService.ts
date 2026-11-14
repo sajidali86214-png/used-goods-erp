@@ -3,7 +3,7 @@ import { Decimal, assertNonNegative, sumDecimal } from "../../lib/money.js";
 import { lockExchangeRate } from "./currencyService.js";
 import { postCustomerReceipt, postRefund } from "./ledgerService.js";
 import { createRefund, markRefundPaid } from "../sales/refundService.js";
-import { getOrderPaymentSummary, updateOrderStatus } from "../sales/salesOrderService.js";
+import { getOrderPaymentSummary, updateOrderStatus, computeOrderCostSummary } from "../sales/salesOrderService.js";
 
 interface AllocationInput {
   orderId: string;
@@ -16,6 +16,13 @@ interface AllocationInput {
  * this is the INDICATIVE rate for the receipt, which is deliberately kept
  * separate from whatever rate a later CurrencyConversion actually achieves.
  * Supports partial payments and many-to-many receipt<->order allocation.
+ *
+ * Rejects any allocation that would push an order's total received past its
+ * net total — this was previously only checked in recordSalesOrderPayment's
+ * wrapper, so this lower-level function (also reachable directly via
+ * POST /finance/receipts, and by one-off scripts) had no protection against
+ * exactly the double-payment this guard exists to prevent (confirmed in
+ * production: two receipts totalling 20,000 against a 10,000 order).
  */
 export async function recordCustomerReceipt(params: {
   customerId?: string;
@@ -31,6 +38,20 @@ export async function recordCustomerReceipt(params: {
   const allocationTotal = sumDecimal(params.allocations.map((a) => new Decimal(a.amount)));
   if (allocationTotal.greaterThan(amount)) {
     throw new Error("Allocations cannot exceed the received amount");
+  }
+
+  for (const alloc of params.allocations) {
+    const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: alloc.orderId }, include: { lines: true } });
+    const { netTotal } = computeOrderCostSummary(order);
+    const existing = await prisma.paymentAllocation.findMany({ where: { orderId: alloc.orderId } });
+    const alreadyReceived = sumDecimal(existing.map((a) => a.amount));
+    const allocAmount = new Decimal(alloc.amount);
+    const newTotal = alreadyReceived.plus(allocAmount);
+    if (newTotal.greaterThan(netTotal)) {
+      throw new Error(
+        `Order ${order.orderNumber} has already received ${alreadyReceived.toString()} of ${netTotal.toString()} due — allocating ${allocAmount.toString()} more would overpay it by ${newTotal.minus(netTotal).toString()}. Nothing was recorded.`,
+      );
+    }
   }
 
   return prisma.paymentReceipt.create({
