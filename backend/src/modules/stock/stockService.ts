@@ -19,15 +19,23 @@ interface ReceiveToInspectionInput {
 }
 
 /**
- * Creates a Lot + its initial CostLayer (grade = UNGRADED) from a GRN line,
- * and records the receiving movement. Landed cost = (price*qty + freight)/qty,
- * fixed on the cost layer at creation (spec section 6.4 worked example).
+ * Creates a Lot + its initial CostLayer from a GRN line, and records the
+ * receiving movement. Landed cost = (price*qty + freight)/qty, fixed on the
+ * cost layer at creation (spec section 6.4 worked example).
+ *
+ * If the receiver already knows the grade (a supplier-sorted AB/C bale,
+ * entered at receiving time), the stock lands directly in "saleable" —
+ * there's nothing left to inspect, so it shouldn't sit idle waiting for a
+ * second manual step. Only an unspecified grade (true UNGRADED) goes to
+ * "inspection", where it actually needs a human grading decision before
+ * it can be sold.
  */
 export async function receiveToInspection(input: ReceiveToInspectionInput) {
   return runSerializable(async (tx) => {
     const receiptGrade = input.gradeId
       ? await tx.grade.findUniqueOrThrow({ where: { id: input.gradeId } })
       : await tx.grade.findUniqueOrThrow({ where: { code: "UNGRADED" } });
+    const destinationState = input.gradeId ? "saleable" : "inspection";
 
     const qty = new Decimal(input.quantity);
     const unitPrice = new Decimal(input.sourceUnitPrice);
@@ -71,7 +79,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
 
     await tx.stockMovement.create({
       data: {
-        type: "receive_to_inspection",
+        type: destinationState === "saleable" ? "receive_to_saleable" : "receive_to_inspection",
         productId: input.productId,
         gradeId: receiptGrade.id,
         binId: input.binId,
@@ -88,7 +96,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
       gradeId: receiptGrade.id,
       binId: input.binId,
       costLayerId: costLayer.id,
-      state: "inspection",
+      state: destinationState,
       onHandDelta: qty,
     });
 

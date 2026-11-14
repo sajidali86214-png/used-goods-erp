@@ -744,8 +744,12 @@ function ReceiveGrnForm({
         }
       }
 
+      const gradedCount = linesToReceive.filter((l) => l.gradeId).length;
+      const ungradedCount = linesToReceive.length - gradedCount;
       setSuccess(
-        `Recorded as GRN ${grn.grnNumber} — ${linesToReceive.length} line(s) received into inventory, currently in Inspection. Move them to saleable stock from each lot's detail view.` +
+        `Recorded as GRN ${grn.grnNumber} — ${linesToReceive.length} line(s) received into inventory.` +
+          (gradedCount > 0 ? ` ${gradedCount} graded line(s) are already saleable.` : "") +
+          (ungradedCount > 0 ? ` ${ungradedCount} line(s) have no grade yet and are in Inspection — grade them from the Inventory page.` : "") +
           (photos.length > 0 ? ` ${photos.length} photo(s) attached.` : ""),
       );
       clearDraft();
