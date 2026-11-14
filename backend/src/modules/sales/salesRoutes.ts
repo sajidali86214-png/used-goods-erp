@@ -295,6 +295,25 @@ export async function salesRoutes(app: FastifyInstance) {
     },
   );
 
+  // Backfill for an order whose fulfilmentStatus was already "dispatched"
+  // or "delivered" from before this automation existed (or before it was
+  // last run) — same pipeline as the automatic trigger below, just callable
+  // on demand. Idempotent: an order with nothing left outstanding to
+  // fulfil just comes back with empty fulfilled/skipped lists.
+  app.post(
+    "/sales/orders/:id/sync-fulfilment",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const result = await autoFulfilAndDispatchOrder(id, request.authUser!.id);
+        return reply.send(result);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_sync" });
+      }
+    },
+  );
+
   // Manual status labels — always available regardless of payment status,
   // unlike updateOrder/updateOrderLine above (no transition rules enforced).
   // Setting fulfilmentStatus to "dispatched" or "delivered" additionally

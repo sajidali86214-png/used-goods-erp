@@ -239,6 +239,25 @@ export function SalesOrdersPage() {
     }
   }
 
+  async function handleSyncFulfilment(orderId: string) {
+    setStatusError(null);
+    setFulfilmentNotice(null);
+    try {
+      const automation = await api.post<{ fulfilled: { lineId: string; quantity: string }[]; skipped: { lineId: string; reason: string }[] }>(
+        `/sales/orders/${orderId}/sync-fulfilment`,
+      );
+      const fulfilledTotal = automation.fulfilled.reduce((sum, f) => sum + Number(f.quantity), 0);
+      if (fulfilledTotal > 0) {
+        setFulfilmentNotice(`${fulfilledTotal} piece(s) auto-reserved, picked, dispatched, and posted to the ledger.`);
+      } else {
+        setFulfilmentNotice("Nothing outstanding to sync — this order's stock/ledger postings are already up to date.");
+      }
+      orders.reload();
+    } catch (err) {
+      setStatusError(err instanceof ApiError ? err.message : "Could not sync this order");
+    }
+  }
+
   async function handlePaymentChange(orderId: string, paymentStatus: string) {
     setStatusError(null);
     if (paymentStatus === "unpaid") {
@@ -621,6 +640,7 @@ export function SalesOrdersPage() {
                 <th>Lines</th>
                 <th>Pieces</th>
                 <th>Amount</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -685,10 +705,17 @@ export function SalesOrdersPage() {
                     <td>{o.lines.length}</td>
                     <td>{o.lines.reduce((sum, l) => sum + Number(l.quantity), 0).toLocaleString()}</td>
                     <td>{Number(o.costSummary?.netTotal ?? 0).toLocaleString()}</td>
+                    <td>
+                      {has("order.create") && ["dispatched", "delivered", "partially_dispatched", "partially_delivered"].includes(o.fulfilmentStatus) && (
+                        <button className="secondary" style={{ fontSize: 12 }} onClick={() => handleSyncFulfilment(o.id)} title="Re-run stock/ledger posting for this order — safe to click any time, does nothing if already up to date">
+                          Sync to ledger
+                        </button>
+                      )}
+                    </td>
                   </tr>
                   {pendingAction?.orderId === o.id && pendingAction.kind === "payment" && (
                     <tr>
-                      <td colSpan={10} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
+                      <td colSpan={11} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
                         <PaymentActionPopup
                           orderId={o.id}
                           accounts={accounts.data ?? []}
@@ -703,7 +730,7 @@ export function SalesOrdersPage() {
                   )}
                   {pendingAction?.orderId === o.id && pendingAction.kind !== "payment" && (
                     <tr>
-                      <td colSpan={10} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
+                      <td colSpan={11} style={{ background: "var(--panel-alt, #f6f7f9)" }}>
                         <StatusActionPopup
                           order={o}
                           action={pendingAction}
