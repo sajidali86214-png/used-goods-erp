@@ -19,6 +19,14 @@ export async function runSerializable<T>(
     try {
       return await prisma.$transaction(fn, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        // Prisma's defaults (maxWait 2s, timeout 5s) are tight for a
+        // multi-step transaction (several sequential round-trips) against a
+        // remote Neon connection — comfortably fast from Vercel, but not
+        // from a higher-latency connection (e.g. a one-off migration script
+        // run from a developer machine). Longer limits cost nothing on the
+        // fast path.
+        maxWait: 10_000,
+        timeout: 20_000,
       });
     } catch (err) {
       attempt += 1;
