@@ -132,9 +132,9 @@ export function DashboardPage() {
               <div className="value">{fmt(financial.data.operatingResult)}</div>
               <div className="label">Operating result</div>
             </div>
-            <div className="stat-tile">
+            <div className="stat-tile" title="What customers still owe across all their orders — booked order value minus what they've actually paid. Not a ledger balance.">
               <div className="value">{fmt(financial.data.receivables)}</div>
-              <div className="label">Receivables</div>
+              <div className="label">Receivables (customers owe you)</div>
             </div>
             <div className="stat-tile">
               <div className="value">{fmt(financial.data.unsoldInventoryValue)}</div>

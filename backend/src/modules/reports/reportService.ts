@@ -495,8 +495,21 @@ export async function getExpensesByCategory(params: { from?: Date; to?: Date }) 
  * Financial dashboard, PKR only (spec section 12) for the given date range:
  * net sales, COGS, gross profit, operating expenses, operating result,
  * receivables, supplier advances outstanding, and unsold inventory value.
- * Keeps booked-order-value, recognized sales, and cash received distinct —
- * this reads only posted ledger entries, never order totals.
+ * Sales/COGS/opex read only posted ledger entries, never order totals.
+ *
+ * Receivables is the one exception, by design: it's "the amount of orders
+ * pending in unpaid status" (sum of getCustomerBalances' per-customer
+ * outstanding), not the ACCOUNTS_RECEIVABLE ledger account balance. The
+ * ledger balance is a timing-dependent double-entry figure — it only
+ * reflects posted dispatch-revenue debits and posted receipt credits, so a
+ * fully-paid order whose dispatch was posted today (common for a historical
+ * backlog being caught up) shows as still "receivable" there even though no
+ * customer actually owes anything. getCustomerBalances compares booked
+ * order value directly against real payments received, which is what an
+ * owner actually means by "who still owes me money" — confirmed wrong in
+ * exactly this way in production (ledger balance showed 10,300 outstanding
+ * immediately after two fully-paid historical orders were dispatched, while
+ * every customer's real outstanding balance was correctly 0 or unchanged).
  */
 export async function getFinancialSummary(params: { from?: Date; to?: Date }) {
   const [sales, returns, cogs, opex, bankCharges] = await Promise.all([
@@ -514,9 +527,9 @@ export async function getFinancialSummary(params: { from?: Date; to?: Date }) {
   const totalOpex = opex.debits.plus(bankCharges.debits);
   const operatingResult = grossProfit.minus(totalOpex);
 
-  const receivablesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "ACCOUNTS_RECEIVABLE" } });
   const supplierAdvancesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
-  const receivables = await getAccountBalance(receivablesAccount.id);
+  const customerBalances = await getCustomerBalances();
+  const receivables = sumDecimal(customerBalances.map((c) => new Decimal(c.outstanding)));
   const supplierAdvancesOutstanding = await getAccountBalance(supplierAdvancesAccount.id);
 
   const inventoryValuation = await getInventoryValuation();
