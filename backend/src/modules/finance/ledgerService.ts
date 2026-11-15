@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertEqual, sumDecimal } from "../../lib/money.js";
 import { assertPeriodNotLocked } from "./periodLockService.js";
+import { runSerializable } from "../../lib/transaction.js";
 
 /**
  * Finance ledger posting — DEFAULT policy, not a final accounting decision.
@@ -62,21 +63,39 @@ export async function postBalanced(params: {
     assertEqual(bucket.debit, bucket.credit, `Unbalanced posting in currency ${currencyId}`);
   }
 
-  return prisma.$transaction(
-    params.entries.map((e) =>
-      prisma.ledgerEntry.create({
-        data: {
-          accountId: e.accountId,
-          direction: e.direction,
-          amount: new Decimal(e.amount),
-          currencyId: e.currencyId,
-          postedAt,
-          relatedDocumentType: params.relatedDocumentType,
-          relatedDocumentId: params.relatedDocumentId,
-        },
-      }),
-    ),
-  );
+  // Every post* function (postExpense, postSupplierAdvance, postCustomerReceipt,
+  // postRefund, postSaleDispatch, postTransfer, postOwnerTransaction) funnels
+  // through here, so this is the one place to guard against the same document
+  // being posted twice — a stale UI call, a retried request, or a leftover
+  // manual "post" route being hit after something already auto-posted would
+  // otherwise silently double every ledger entry with no error. Checked and
+  // inserted inside the same SERIALIZABLE transaction so two concurrent
+  // calls for the same document can't both pass the check before either
+  // commits (runSerializable retries the loser, not silently proceeds).
+  return runSerializable(async (tx) => {
+    const alreadyPosted = await tx.ledgerEntry.findFirst({
+      where: { relatedDocumentType: params.relatedDocumentType, relatedDocumentId: params.relatedDocumentId },
+    });
+    if (alreadyPosted) {
+      throw new Error(`${params.relatedDocumentType} ${params.relatedDocumentId} has already been posted to the ledger`);
+    }
+
+    return Promise.all(
+      params.entries.map((e) =>
+        tx.ledgerEntry.create({
+          data: {
+            accountId: e.accountId,
+            direction: e.direction,
+            amount: new Decimal(e.amount),
+            currencyId: e.currencyId,
+            postedAt,
+            relatedDocumentType: params.relatedDocumentType,
+            relatedDocumentId: params.relatedDocumentId,
+          },
+        }),
+      ),
+    );
+  });
 }
 
 /** Balance = sum of amounts on the account's "increasing" side minus the "decreasing" side, per its nature. */

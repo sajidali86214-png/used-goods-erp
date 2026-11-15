@@ -14,6 +14,7 @@ import {
 } from "./purchaseOrderService.js";
 import { createGRN } from "./grnService.js";
 import { renderPurchaseOrderPdf } from "./poDocumentService.js";
+import { postSupplierAdvance } from "../finance/ledgerService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
@@ -245,6 +246,12 @@ export async function purchasingRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = advanceSchema.parse(request.body);
       const advance = await recordSupplierAdvance(body);
+      // Post to the ledger in the same request — the frontend previously
+      // chained two separate calls (create, then post) with nothing to
+      // detect or retry a failure between them, so an advance could exist
+      // unposted with no account impact. Same bug class as the sales-
+      // dispatch gap fixed earlier this session, fixed the same way.
+      await postSupplierAdvance(advance.id);
       return reply.code(201).send(advance);
     },
   );

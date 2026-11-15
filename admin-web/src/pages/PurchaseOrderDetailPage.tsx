@@ -432,7 +432,7 @@ function SupplierPaymentForm({
     setSuccess(null);
     setSubmitting(true);
     try {
-      const advance = await api.post<{ id: string }>("/purchasing/advances", {
+      await api.post<{ id: string }>("/purchasing/advances", {
         supplierId,
         poId,
         currencyId,
@@ -441,7 +441,6 @@ function SupplierPaymentForm({
         paymentMethodAccountId,
         reference: reference || undefined,
       });
-      await api.post(`/finance/post/supplier-advances/${advance.id}`);
       setSuccess("Payment recorded and posted — it's already linked to this PO, no need to re-enter it elsewhere.");
       setAmount("");
       setReference("");
