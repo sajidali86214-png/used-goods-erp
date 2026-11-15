@@ -1,7 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertNonNegative, sumDecimal } from "../../lib/money.js";
 import { lockExchangeRate } from "./currencyService.js";
-import { postCustomerReceipt, postRefund } from "./ledgerService.js";
+import { postCustomerReceipt, postRefund, postTransfer } from "./ledgerService.js";
 import { createRefund, markRefundPaid } from "../sales/refundService.js";
 import { getOrderPaymentSummary, updateOrderStatus, computeOrderCostSummary } from "../sales/salesOrderService.js";
 
@@ -189,4 +189,35 @@ export async function recordSalesOrderRefund(params: {
   await markRefundPaid(refund.id, params.paymentMethodAccountId);
   await postRefund(refund.id);
   return refund;
+}
+
+/**
+ * Moves money between two of the business's own accounts (e.g. cash into
+ * the bank) and posts it immediately — a transfer must never touch
+ * SALES_REVENUE/OPERATING_EXPENSES, only the two Accounts involved, so it
+ * can never be miscategorized as a sale or an expense (spec section 7).
+ * Only PKR for now, same constraint as every other ledger posting here.
+ */
+export async function recordTransfer(params: {
+  fromAccountId: string;
+  toAccountId: string;
+  amount: Decimal | number;
+  occurredAt?: Date;
+}) {
+  if (params.fromAccountId === params.toAccountId) {
+    throw new Error("A transfer must move money between two different accounts");
+  }
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+
+  const transfer = await prisma.transfer.create({
+    data: {
+      fromAccountId: params.fromAccountId,
+      toAccountId: params.toAccountId,
+      amount: new Decimal(params.amount),
+      currencyId: pkr.id,
+      occurredAt: params.occurredAt ?? new Date(),
+    },
+  });
+  await postTransfer(transfer.id);
+  return transfer;
 }

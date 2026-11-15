@@ -164,7 +164,152 @@ function AccountsTab() {
           </tbody>
         </table>
       )}
+
+      {accounts.data && accounts.data.length >= 2 && <TransferForm accounts={accounts.data} onDone={() => accounts.reload()} />}
+      {accounts.data && accounts.data.length >= 1 && <OwnerTransactionForm accounts={accounts.data} onDone={() => accounts.reload()} />}
     </div>
+  );
+}
+
+function TransferForm({ accounts, onDone }: { accounts: Account[]; onDone: () => void }) {
+  const [fromAccountId, setFromAccountId] = useState("");
+  const [toAccountId, setToAccountId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setSubmitting(true);
+    try {
+      await api.post("/finance/transfers", {
+        fromAccountId,
+        toAccountId,
+        amount: Number(amount),
+        occurredAt: new Date(occurredAt).toISOString(),
+      });
+      setSuccess("Transfer recorded and posted.");
+      setAmount("");
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record transfer");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="panel" onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Move money between accounts</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        E.g. depositing cash into the bank. Never affects sales or expenses — only the two accounts involved.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <div className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field">
+          <label>From</label>
+          <select value={fromAccountId} onChange={(e) => setFromAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>To</label>
+          <select value={toAccountId} onChange={(e) => setToAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.filter((a) => a.id !== fromAccountId).map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Amount</label>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0.01} step="0.01" />
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Date</label>
+          <input type="date" value={occurredAt} onChange={(e) => setOccurredAt(e.target.value)} required />
+        </div>
+        <button type="submit" disabled={submitting || !fromAccountId || !toAccountId} style={{ height: 36 }}>
+          {submitting ? "Recording..." : "Transfer"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function OwnerTransactionForm({ accounts, onDone }: { accounts: Account[]; onDone: () => void }) {
+  const [accountId, setAccountId] = useState("");
+  const [type, setType] = useState<"contribution" | "withdrawal">("contribution");
+  const [amount, setAmount] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setSubmitting(true);
+    try {
+      await api.post("/finance/owner-transactions", { accountId, amount: Number(amount), type });
+      setSuccess(`Owner ${type} recorded and posted.`);
+      setAmount("");
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record this");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="panel" onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Owner contribution / withdrawal</h3>
+      <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+        Money the owner puts into or takes out of the business — excluded from trading profit, only moves this account and Owner's Equity.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <div className="form-row" style={{ alignItems: "flex-end" }}>
+        <div className="field">
+          <label>Account</label>
+          <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Type</label>
+          <select value={type} onChange={(e) => setType(e.target.value as "contribution" | "withdrawal")}>
+            <option value="contribution">Contribution (owner puts money in)</option>
+            <option value="withdrawal">Withdrawal (owner takes money out)</option>
+          </select>
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Amount</label>
+          <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0.01} step="0.01" />
+        </div>
+        <button type="submit" disabled={submitting || !accountId} style={{ height: 36 }}>
+          {submitting ? "Recording..." : "Record"}
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -179,12 +324,11 @@ function AccountRow({ account, onChanged }: { account: Account; onChanged: () =>
     setError(null);
     setSaving(true);
     try {
-      const tx = await api.post<{ id: string }>("/finance/owner-transactions", {
+      await api.post<{ id: string }>("/finance/owner-transactions", {
         accountId: account.id,
         amount: Number(amount),
         type: "contribution",
       });
-      await api.post(`/finance/post/owner-transactions/${tx.id}`);
       setShowOpeningBalance(false);
       setAmount("");
       balance.reload();

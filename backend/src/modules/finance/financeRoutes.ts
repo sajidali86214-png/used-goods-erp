@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requirePermission } from "../../middleware/rbac.js";
 import { lockExchangeRate, latestRate } from "./currencyService.js";
-import { recordCustomerReceipt, convertCurrency, totalReceivedForOrder } from "./paymentService.js";
+import { recordCustomerReceipt, convertCurrency, totalReceivedForOrder, recordTransfer } from "./paymentService.js";
 import {
   postExpense,
   postSupplierAdvance,
@@ -54,6 +54,13 @@ const createOwnerTransactionSchema = z.object({
   occurredAt: z.coerce.date().optional(),
 });
 
+const createTransferSchema = z.object({
+  fromAccountId: z.string().uuid(),
+  toAccountId: z.string().uuid(),
+  amount: z.number().positive(),
+  occurredAt: z.coerce.date().optional(),
+});
+
 const createExpenseSchema = z.object({
   date: z.coerce.date(),
   payeeType: z.enum(["supplier", "other"]),
@@ -80,9 +87,12 @@ export async function financeRoutes(app: FastifyInstance) {
     },
   );
 
-  // Also how an account's opening balance is recorded — create the
-  // transaction here, then post it via /finance/post/owner-transactions/:id
-  // (same two-step pattern as expenses/receipts below).
+  // Also how an account's opening balance is recorded. Posts in the same
+  // request — this used to be a separate call to
+  // /finance/post/owner-transactions/:id, the same non-atomic two-call
+  // pattern fixed for supplier advances and sales dispatch elsewhere this
+  // session: nothing detected or retried a failure between create and post,
+  // so a contribution/withdrawal could exist with no account impact.
   app.post(
     "/finance/owner-transactions",
     { preHandler: requirePermission("finance.payment") },
@@ -91,7 +101,22 @@ export async function financeRoutes(app: FastifyInstance) {
       const tx = await prisma.ownerTransaction.create({
         data: { ...body, amount: new Decimal(body.amount) },
       });
+      await postOwnerTransaction(tx.id);
       return reply.code(201).send(tx);
+    },
+  );
+
+  app.post(
+    "/finance/transfers",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = createTransferSchema.parse(request.body);
+      try {
+        const transfer = await recordTransfer(body);
+        return reply.code(201).send(transfer);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_transfer" });
+      }
     },
   );
 
