@@ -130,6 +130,7 @@ export async function getInventoryOverview(filters: {
   categoryId?: string;
   brandId?: string;
   gradeId?: string;
+  lotId?: string;
   search?: string;
   stockStatus?: "available" | "awaiting_inspection" | "reserved";
   includeCost: boolean;
@@ -137,6 +138,7 @@ export async function getInventoryOverview(filters: {
   const states = await prisma.stockState.findMany({
     where: {
       gradeId: filters.gradeId,
+      ...(filters.lotId ? { costLayer: { lotId: filters.lotId } } : {}),
       product: {
         categoryId: filters.categoryId,
         brandId: filters.brandId,

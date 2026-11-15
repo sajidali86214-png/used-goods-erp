@@ -126,6 +126,22 @@ export async function masterDataRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---- Lots (for the inventory lot filter — only lots still holding stock) ----
+  app.get("/settings/lots", async () => {
+    const costLayers = await prisma.costLayer.findMany({
+      where: { quantityRemaining: { gt: 0 } },
+      include: { lot: { include: { product: true } } },
+    });
+    const byLotId = new Map<string, { id: string; lotCode: string; productId: string; skuCode: string }>();
+    for (const cl of costLayers) {
+      if (!cl.lot) continue;
+      if (!byLotId.has(cl.lot.id)) {
+        byLotId.set(cl.lot.id, { id: cl.lot.id, lotCode: cl.lot.lotCode, productId: cl.lot.productId, skuCode: cl.lot.product.skuCode });
+      }
+    }
+    return [...byLotId.values()].sort((a, b) => a.lotCode.localeCompare(b.lotCode));
+  });
+
   // ---- Expense categories ----
   app.get("/settings/expense-categories", async () => prisma.expenseCategory.findMany({ orderBy: { label: "asc" } }));
   app.post(

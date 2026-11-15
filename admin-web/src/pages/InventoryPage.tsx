@@ -79,6 +79,13 @@ interface Bin {
   label: string;
 }
 
+interface LotOption {
+  id: string;
+  lotCode: string;
+  productId: string;
+  skuCode: string;
+}
+
 const ALL = "";
 type StockStatusFilter = "" | "available" | "awaiting_inspection" | "reserved";
 
@@ -89,23 +96,26 @@ export function InventoryPage() {
   const [categoryId, setCategoryId] = useState(ALL);
   const [brandId, setBrandId] = useState(ALL);
   const [gradeId, setGradeId] = useState(ALL);
+  const [lotId, setLotId] = useState(ALL);
   const [stockStatus, setStockStatus] = useState<StockStatusFilter>(ALL);
 
   const categories = useFetch<Category[]>("/settings/categories");
   const brands = useFetch<BrandOption[]>("/settings/brands");
   const grades = useFetch<Grade[]>("/settings/grades");
+  const lots = useFetch<LotOption[]>("/settings/lots");
 
   const query = new URLSearchParams();
   if (debouncedSearch) query.set("search", debouncedSearch);
   if (categoryId) query.set("categoryId", categoryId);
   if (brandId) query.set("brandId", brandId);
   if (gradeId) query.set("gradeId", gradeId);
+  if (lotId) query.set("lotId", lotId);
   if (stockStatus) query.set("stockStatus", stockStatus);
   const queryString = query.toString();
 
   const overview = useFetch<InventoryOverview>(
     `/reports/inventory-overview${queryString ? `?${queryString}` : ""}`,
-    [debouncedSearch, categoryId, brandId, gradeId, stockStatus],
+    [debouncedSearch, categoryId, brandId, gradeId, lotId, stockStatus],
   );
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
 
@@ -120,10 +130,11 @@ export function InventoryPage() {
     setCategoryId(ALL);
     setBrandId(ALL);
     setGradeId(ALL);
+    setLotId(ALL);
     setStockStatus(ALL);
   }
 
-  const activeFilterCount = [debouncedSearch, categoryId, brandId, gradeId, stockStatus].filter(Boolean).length;
+  const activeFilterCount = [debouncedSearch, categoryId, brandId, gradeId, lotId, stockStatus].filter(Boolean).length;
 
   function handleDownload() {
     const rows = overview.data?.rows ?? [];
@@ -188,6 +199,17 @@ export function InventoryPage() {
               {grades.data?.map((g) => (
                 <option key={g.id} value={g.id}>
                   {g.code}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Lot</label>
+            <select value={lotId} onChange={(e) => setLotId(e.target.value)}>
+              <option value={ALL}>All</option>
+              {lots.data?.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.lotCode} ({l.skuCode})
                 </option>
               ))}
             </select>

@@ -44,10 +44,11 @@ export async function reportRoutes(app: FastifyInstance) {
     "/reports/inventory-overview",
     { preHandler: requirePermission("stock.count") },
     async (request) => {
-      const { categoryId, brandId, gradeId, search, stockStatus } = request.query as {
+      const { categoryId, brandId, gradeId, lotId, search, stockStatus } = request.query as {
         categoryId?: string;
         brandId?: string;
         gradeId?: string;
+        lotId?: string;
         search?: string;
         stockStatus?: "available" | "awaiting_inspection" | "reserved";
       };
@@ -55,6 +56,7 @@ export async function reportRoutes(app: FastifyInstance) {
         categoryId,
         brandId,
         gradeId,
+        lotId,
         search,
         stockStatus,
         includeCost: request.authUser!.permissions.has("cost.view"),
