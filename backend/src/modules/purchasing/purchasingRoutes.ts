@@ -13,6 +13,7 @@ import {
   getPurchaseOrderAmendments,
 } from "./purchaseOrderService.js";
 import { createGRN } from "./grnService.js";
+import { reverseGrnLineReceipt } from "./grnCorrectionService.js";
 import { renderPurchaseOrderPdf } from "./poDocumentService.js";
 import { postSupplierAdvance } from "../finance/ledgerService.js";
 import { prisma } from "../../lib/prisma.js";
@@ -89,6 +90,10 @@ const updatePOLineSchema = z.object({
 const amendPOLineSchema = z.object({
   orderedQty: z.number().positive().optional(),
   unitPrice: z.number().nonnegative().optional(),
+  reason: z.string().min(1),
+});
+
+const reverseGrnLineSchema = z.object({
   reason: z.string().min(1),
 });
 
@@ -273,6 +278,21 @@ export async function purchasingRoutes(app: FastifyInstance) {
       const body = createGRNSchema.parse(request.body);
       const grn = await createGRN({ ...body, receivingUserId: request.authUser!.id });
       return reply.code(201).send(grn);
+    },
+  );
+
+  app.post(
+    "/purchasing/grn-lines/:id/reverse",
+    { preHandler: requirePermission("stock.receive") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = reverseGrnLineSchema.parse(request.body);
+      try {
+        const line = await reverseGrnLineReceipt({ grnLineId: id, reason: body.reason, actorUserId: request.authUser!.id });
+        return reply.send(line);
+      } catch (err) {
+        return reply.code(409).send({ error: err instanceof Error ? err.message : "could_not_reverse" });
+      }
     },
   );
 }
