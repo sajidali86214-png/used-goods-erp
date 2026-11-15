@@ -121,6 +121,17 @@ function emptyNewOrderDraft(): NewOrderDraft {
   };
 }
 
+interface NewCustomerDraft {
+  name: string;
+  address: string;
+  city: string;
+  country: string;
+  phone: string;
+}
+function emptyNewCustomerDraft(): NewCustomerDraft {
+  return { name: "", address: "", city: "", country: "", phone: "" };
+}
+
 function lineDiscountAmount(line: NewOrderLine): number {
   const gross = (Number(line.quantity) || 0) * (Number(line.unitPrice) || 0);
   const discountValueNum = Number(line.discountValue) || 0;
@@ -186,11 +197,17 @@ export function SalesOrdersPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [showNewCustomer, setShowNewCustomer] = useState(false);
-  const [newCustomerName, setNewCustomerName] = useState("");
-  const [newCustomerAddress, setNewCustomerAddress] = useState("");
-  const [newCustomerCity, setNewCustomerCity] = useState("");
-  const [newCustomerCountry, setNewCustomerCountry] = useState("");
-  const [newCustomerPhone, setNewCustomerPhone] = useState("");
+  const [newCustomerDraft, setNewCustomerDraft, clearNewCustomerDraft] = useDraft<NewCustomerDraft>(
+    "new-sales-order-customer",
+    emptyNewCustomerDraft(),
+  );
+  const { name: newCustomerName, address: newCustomerAddress, city: newCustomerCity, country: newCustomerCountry, phone: newCustomerPhone } =
+    newCustomerDraft;
+  const setNewCustomerName = (v: string) => setNewCustomerDraft((d) => ({ ...d, name: v }));
+  const setNewCustomerAddress = (v: string) => setNewCustomerDraft((d) => ({ ...d, address: v }));
+  const setNewCustomerCity = (v: string) => setNewCustomerDraft((d) => ({ ...d, city: v }));
+  const setNewCustomerCountry = (v: string) => setNewCustomerDraft((d) => ({ ...d, country: v }));
+  const setNewCustomerPhone = (v: string) => setNewCustomerDraft((d) => ({ ...d, phone: v }));
   const [customerError, setCustomerError] = useState<string | null>(null);
   const [savingCustomer, setSavingCustomer] = useState(false);
 
@@ -274,11 +291,7 @@ export function SalesOrdersPage() {
       await customers.reload();
       setCustomerId(created.id);
       setShowNewCustomer(false);
-      setNewCustomerName("");
-      setNewCustomerAddress("");
-      setNewCustomerCity("");
-      setNewCustomerCountry("");
-      setNewCustomerPhone("");
+      clearNewCustomerDraft();
     } catch (err) {
       setCustomerError(err instanceof ApiError ? err.message : "Could not create customer");
     } finally {

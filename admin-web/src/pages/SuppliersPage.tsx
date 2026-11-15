@@ -3,6 +3,17 @@ import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
+import { useDraft } from "../lib/useDraft";
+
+interface NewSupplierDraft {
+  name: string;
+  defaultCurrencyId: string;
+  contactPerson: string;
+  phone: string;
+}
+function emptySupplierDraft(): NewSupplierDraft {
+  return { name: "", defaultCurrencyId: "", contactPerson: "", phone: "" };
+}
 
 interface Supplier {
   id: string;
@@ -25,10 +36,12 @@ export function SuppliersPage() {
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
   const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState("");
-  const [defaultCurrencyId, setDefaultCurrencyId] = useState("");
-  const [contactPerson, setContactPerson] = useState("");
-  const [phone, setPhone] = useState("");
+  const [draft, setDraft, clearDraft] = useDraft<NewSupplierDraft>("new-supplier", emptySupplierDraft());
+  const { name, defaultCurrencyId, contactPerson, phone } = draft;
+  const setName = (v: string) => setDraft((d) => ({ ...d, name: v }));
+  const setDefaultCurrencyId = (v: string) => setDraft((d) => ({ ...d, defaultCurrencyId: v }));
+  const setContactPerson = (v: string) => setDraft((d) => ({ ...d, contactPerson: v }));
+  const setPhone = (v: string) => setDraft((d) => ({ ...d, phone: v }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -38,9 +51,7 @@ export function SuppliersPage() {
     setSubmitting(true);
     try {
       await api.post("/suppliers", { name, defaultCurrencyId, contactPerson: contactPerson || undefined, phone: phone || undefined });
-      setName("");
-      setContactPerson("");
-      setPhone("");
+      clearDraft();
       setShowForm(false);
       suppliers.reload();
     } catch (err) {
