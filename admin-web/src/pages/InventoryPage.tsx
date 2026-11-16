@@ -22,13 +22,23 @@ interface InventoryOverviewRow {
   availableQty: string;
   reservedQty: string;
   inspectionQty: string;
+  repairQty: string;
+  damagedQty: string;
   gradeBreakdown: GradeBreakdownEntry[];
   avgUnitCost: string | null;
   totalValue: string | null;
 }
 interface InventoryOverview {
   rows: InventoryOverviewRow[];
-  totals: { onHandQty: string; availableQty: string; reservedQty: string; inspectionQty: string; totalValue: string | null };
+  totals: {
+    onHandQty: string;
+    availableQty: string;
+    reservedQty: string;
+    inspectionQty: string;
+    repairQty: string;
+    damagedQty: string;
+    totalValue: string | null;
+  };
 }
 interface Category {
   id: string;
@@ -147,6 +157,8 @@ export function InventoryPage() {
       { header: "Available", value: (r) => r.availableQty },
       { header: "Reserved", value: (r) => r.reservedQty },
       { header: "Awaiting inspection", value: (r) => r.inspectionQty },
+      { header: "In repair", value: (r) => r.repairQty },
+      { header: "Damaged", value: (r) => r.damagedQty },
       { header: "Grade breakdown", value: (r) => r.gradeBreakdown.map((g) => `${g.gradeCode}:${g.qty}`).join(" ") },
     ];
     if (has("cost.view")) {
@@ -255,6 +267,8 @@ export function InventoryPage() {
                   <th>Available</th>
                   <th>Reserved</th>
                   <th>Inspection</th>
+                  <th>Repair</th>
+                  <th>Damaged</th>
                   <th>Grades</th>
                   {has("cost.view") && <th>Avg cost</th>}
                   {has("cost.view") && <th>Value</th>}
@@ -272,6 +286,8 @@ export function InventoryPage() {
                     <td>{Number(r.availableQty).toLocaleString()}</td>
                     <td>{Number(r.reservedQty).toLocaleString()}</td>
                     <td>{Number(r.inspectionQty) > 0 ? Number(r.inspectionQty).toLocaleString() : "—"}</td>
+                    <td>{Number(r.repairQty) > 0 ? Number(r.repairQty).toLocaleString() : "—"}</td>
+                    <td>{Number(r.damagedQty) > 0 ? Number(r.damagedQty).toLocaleString() : "—"}</td>
                     <td style={{ fontSize: 12 }}>
                       {r.gradeBreakdown.map((g) => `${g.gradeCode}: ${Number(g.qty).toLocaleString()}`).join(", ")}
                     </td>
@@ -286,7 +302,7 @@ export function InventoryPage() {
                 ))}
                 {overview.data.rows.length === 0 && (
                   <tr>
-                    <td colSpan={has("cost.view") ? 11 : 9}>No products currently hold stock matching these filters.</td>
+                    <td colSpan={has("cost.view") ? 13 : 11}>No products currently hold stock matching these filters.</td>
                   </tr>
                 )}
               </tbody>
@@ -298,6 +314,8 @@ export function InventoryPage() {
                     <td>{Number(overview.data.totals.availableQty).toLocaleString()}</td>
                     <td>{Number(overview.data.totals.reservedQty).toLocaleString()}</td>
                     <td>{Number(overview.data.totals.inspectionQty).toLocaleString()}</td>
+                    <td>{Number(overview.data.totals.repairQty).toLocaleString()}</td>
+                    <td>{Number(overview.data.totals.damagedQty).toLocaleString()}</td>
                     <td></td>
                     {has("cost.view") && <td></td>}
                     {has("cost.view") && <td>{overview.data.totals.totalValue ? Number(overview.data.totals.totalValue).toLocaleString() : "—"}</td>}

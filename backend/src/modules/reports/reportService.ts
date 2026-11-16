@@ -168,6 +168,8 @@ export async function getInventoryOverview(filters: {
     availableQty: Decimal;
     reservedQty: Decimal;
     inspectionQty: Decimal;
+    repairQty: Decimal;
+    damagedQty: Decimal;
     gradeQty: Map<string, Decimal>;
     costWeightedTotal: Decimal;
     costWeightedQty: Decimal;
@@ -190,6 +192,8 @@ export async function getInventoryOverview(filters: {
         availableQty: new Decimal(0),
         reservedQty: new Decimal(0),
         inspectionQty: new Decimal(0),
+        repairQty: new Decimal(0),
+        damagedQty: new Decimal(0),
         gradeQty: new Map<string, Decimal>(),
         costWeightedTotal: new Decimal(0),
         costWeightedQty: new Decimal(0),
@@ -199,6 +203,8 @@ export async function getInventoryOverview(filters: {
     bucket.reservedQty = bucket.reservedQty.plus(s.reservedQty);
     if (s.state === "saleable") bucket.availableQty = bucket.availableQty.plus(s.onHandQty.minus(s.reservedQty));
     if (s.state === "inspection") bucket.inspectionQty = bucket.inspectionQty.plus(s.onHandQty);
+    if (s.state === "repair") bucket.repairQty = bucket.repairQty.plus(s.onHandQty);
+    if (s.state === "damaged") bucket.damagedQty = bucket.damagedQty.plus(s.onHandQty);
 
     const gradeCode = s.grade.code;
     bucket.gradeQty.set(gradeCode, (bucket.gradeQty.get(gradeCode) ?? new Decimal(0)).plus(s.onHandQty));
@@ -226,6 +232,8 @@ export async function getInventoryOverview(filters: {
       availableQty: b.availableQty,
       reservedQty: b.reservedQty,
       inspectionQty: b.inspectionQty,
+      repairQty: b.repairQty,
+      damagedQty: b.damagedQty,
       gradeBreakdown: [...b.gradeQty.entries()].map(([gradeCode, qty]) => ({ gradeCode, qty })),
       avgUnitCost: filters.includeCost && b.costWeightedQty.greaterThan(0) ? b.costWeightedTotal.div(b.costWeightedQty) : null,
       totalValue: filters.includeCost ? b.costWeightedTotal : null,
@@ -237,6 +245,8 @@ export async function getInventoryOverview(filters: {
     availableQty: sumDecimal(rows.map((r) => r.availableQty)),
     reservedQty: sumDecimal(rows.map((r) => r.reservedQty)),
     inspectionQty: sumDecimal(rows.map((r) => r.inspectionQty)),
+    repairQty: sumDecimal(rows.map((r) => r.repairQty)),
+    damagedQty: sumDecimal(rows.map((r) => r.damagedQty)),
     totalValue: filters.includeCost ? sumDecimal(rows.map((r) => r.totalValue ?? new Decimal(0))) : null,
   };
 
