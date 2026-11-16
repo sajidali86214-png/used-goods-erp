@@ -6,7 +6,9 @@ import {
   getInventoryValueByCategory,
   getInventoryOverview,
   getPendingReceipts,
+  getPaidButUnreceivedPurchases,
   getUnfulfilledOrders,
+  getFulfilmentSummary,
   getPendingReturns,
   getPendingRefunds,
   getFinancialSummary,
@@ -25,8 +27,16 @@ export async function reportRoutes(app: FastifyInstance) {
     { preHandler: requirePermission("stock.receive") },
     async () => getPendingReceipts(),
   );
+  app.get(
+    "/reports/paid-but-unreceived-purchases",
+    { preHandler: requirePermission("stock.receive") },
+    async () => getPaidButUnreceivedPurchases(),
+  );
   app.get("/reports/unfulfilled-orders", { preHandler: requirePermission("order.pick") }, async () =>
     getUnfulfilledOrders(),
+  );
+  app.get("/reports/fulfilment-summary", { preHandler: requirePermission("order.pick") }, async () =>
+    getFulfilmentSummary(),
   );
   app.get("/reports/pending-returns", { preHandler: requirePermission("return.process") }, async () =>
     getPendingReturns(),

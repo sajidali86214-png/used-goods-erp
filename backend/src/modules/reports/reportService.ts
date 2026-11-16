@@ -293,6 +293,38 @@ export async function getPendingReceipts() {
   return results;
 }
 
+/**
+ * Purchase orders where real money has already gone out (a supplier
+ * advance) but stock is still outstanding on at least one line — the
+ * "paid-but-unreceived" case spec section 8 calls out as its own dashboard
+ * card, distinct from "POs with outstanding receipt" generally (which
+ * includes POs nothing has been paid against yet).
+ */
+export async function getPaidButUnreceivedPurchases() {
+  const pos = await prisma.purchaseOrder.findMany({
+    where: { status: { in: ["approved", "draft"] } },
+    include: { lines: true, supplier: true },
+  });
+
+  const results = [];
+  for (const po of pos) {
+    const advances = await prisma.supplierAdvance.findMany({ where: { poId: po.id } });
+    const totalAdvance = sumDecimal(advances.map((a) => a.amount));
+    if (totalAdvance.lessThanOrEqualTo(0)) continue;
+
+    let outstandingQty = new Decimal(0);
+    for (const line of po.lines) {
+      const grnLines = await prisma.gRNLine.findMany({ where: { poLineId: line.id } });
+      const receivedQty = sumDecimal(grnLines.map((g) => g.receivedQty));
+      outstandingQty = outstandingQty.plus(line.orderedQty.minus(receivedQty));
+    }
+    if (outstandingQty.greaterThan(0)) {
+      results.push({ poId: po.id, poNumber: po.poNumber, supplierName: po.supplier.name, totalAdvance, outstandingQty });
+    }
+  }
+  return results;
+}
+
 /** Sales orders not yet fully dispatched/delivered. */
 export async function getUnfulfilledOrders() {
   return prisma.salesOrder.findMany({
@@ -302,6 +334,14 @@ export async function getUnfulfilledOrders() {
     },
     include: { customer: true, lines: true },
   });
+}
+
+/** Count of sales orders by fulfilmentStatus — spec section 8's "dispatched/delivered summary". */
+export async function getFulfilmentSummary() {
+  const orders = await prisma.salesOrder.groupBy({ by: ["fulfilmentStatus"], _count: { _all: true } });
+  const counts: Record<string, number> = {};
+  for (const o of orders) counts[o.fulfilmentStatus] = o._count._all;
+  return counts;
 }
 
 /** Return requests not yet resolved. */
