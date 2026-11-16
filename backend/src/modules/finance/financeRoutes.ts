@@ -12,6 +12,7 @@ import {
   postTransfer,
   postOwnerTransaction,
   getAccountBalance,
+  settleExpensePayment,
 } from "./ledgerService.js";
 import { lockPeriod, reopenPeriod } from "./periodLockService.js";
 import { getAccountStatement } from "./financeStatementService.js";
@@ -83,7 +84,43 @@ export async function financeRoutes(app: FastifyInstance) {
       const expense = await prisma.expense.create({
         data: { ...body, amount: new Decimal(body.amount), approvedByUserId: request.authUser!.id },
       });
+      // Posts immediately (whether paid or unpaid — postExpense already
+      // credits the paying account if paid, Accounts Payable if not). Same
+      // non-atomic two-call pattern fixed elsewhere this session: a second,
+      // separate call to /finance/post/expenses/:id left an expense that
+      // could exist with no ledger impact if that second call never
+      // happened.
+      await postExpense(expense.id);
       return reply.code(201).send(expense);
+    },
+  );
+
+  app.get(
+    "/finance/expenses",
+    { preHandler: requirePermission("finance.report.view") },
+    async (request) => {
+      const { paymentStatus } = request.query as { paymentStatus?: string };
+      return prisma.expense.findMany({
+        where: paymentStatus ? { paymentStatus } : undefined,
+        include: { account: true },
+        orderBy: { date: "desc" },
+        take: 200,
+      });
+    },
+  );
+
+  app.post(
+    "/finance/expenses/:id/settle",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = z.object({ payingAccountId: z.string().uuid() }).parse(request.body);
+      try {
+        const expense = await settleExpensePayment(id, body.payingAccountId);
+        return reply.send(expense);
+      } catch (err) {
+        return reply.code(409).send({ error: err instanceof Error ? err.message : "could_not_settle" });
+      }
     },
   );
 

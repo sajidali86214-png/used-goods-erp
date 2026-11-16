@@ -47,7 +47,12 @@ export function FinancePage() {
         </button>
       </div>
 
-      {tab === "expenses" && <ExpenseForm accounts={accounts.data ?? []} currencies={currencies.data ?? []} />}
+      {tab === "expenses" && (
+        <>
+          <ExpenseForm accounts={accounts.data ?? []} currencies={currencies.data ?? []} />
+          <UnpaidExpensesPanel accounts={accounts.data ?? []} />
+        </>
+      )}
       {tab === "receipts" && <ReceiptForm accounts={accounts.data ?? []} currencies={currencies.data ?? []} />}
       {tab === "balances" && <AccountBalances accounts={accounts.data ?? []} />}
       {tab === "ledger" && <LedgerTab accounts={accounts.data ?? []} />}
@@ -219,19 +224,21 @@ interface ExpenseDraft {
   accountId: string;
   currencyId: string;
   amount: string;
+  paymentStatus: "paid" | "unpaid";
 }
 function emptyExpenseDraft(): ExpenseDraft {
-  return { categoryId: "", accountId: "", currencyId: "", amount: "" };
+  return { categoryId: "", accountId: "", currencyId: "", amount: "", paymentStatus: "paid" };
 }
 
 function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies: Currency[] }) {
   const categories = useFetch<ExpenseCategory[]>("/settings/expense-categories");
   const [draft, setDraft, clearDraft] = useDraft<ExpenseDraft>("new-expense", emptyExpenseDraft());
-  const { categoryId, accountId, currencyId, amount } = draft;
+  const { categoryId, accountId, currencyId, amount, paymentStatus } = draft;
   const setCategoryId = (v: string) => setDraft((d) => ({ ...d, categoryId: v }));
   const setAccountId = (v: string) => setDraft((d) => ({ ...d, accountId: v }));
   const setCurrencyId = (v: string) => setDraft((d) => ({ ...d, currencyId: v }));
   const setAmount = (v: string) => setDraft((d) => ({ ...d, amount: v }));
+  const setPaymentStatus = (v: "paid" | "unpaid") => setDraft((d) => ({ ...d, paymentStatus: v }));
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -240,17 +247,20 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
     setError(null);
     setSuccess(null);
     try {
-      const expense = await api.post<{ id: string }>("/finance/expenses", {
+      await api.post<{ id: string }>("/finance/expenses", {
         date: new Date().toISOString(),
         payeeType: "other",
         categoryId,
         currencyId,
         amount: Number(amount),
-        paymentStatus: "paid",
+        paymentStatus,
         accountId,
       });
-      await api.post(`/finance/post/expenses/${expense.id}`);
-      setSuccess("Expense recorded and posted to the ledger.");
+      setSuccess(
+        paymentStatus === "paid"
+          ? "Expense recorded and posted to the ledger."
+          : "Unpaid expense recorded — posted to Accounts Payable, no cash moved yet.",
+      );
       clearDraft();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not record expense");
@@ -275,7 +285,16 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
           </select>
         </div>
         <div className="field">
-          <label>Paid from account</label>
+          <label>Status</label>
+          <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value as "paid" | "unpaid")}>
+            <option value="paid">Already paid</option>
+            <option value="unpaid">Unpaid (payable) — owed but not paid yet</option>
+          </select>
+        </div>
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label>{paymentStatus === "paid" ? "Paid from account" : "Account it will be paid from"}</label>
           <select value={accountId} onChange={(e) => setAccountId(e.target.value)} required>
             <option value="">Select...</option>
             {accounts.map((a) => (
@@ -285,8 +304,6 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
             ))}
           </select>
         </div>
-      </div>
-      <div className="form-row">
         <div className="field">
           <label>Currency</label>
           <select value={currencyId} onChange={(e) => setCurrencyId(e.target.value)} required>
@@ -303,8 +320,87 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
           <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} required min={0} step="0.01" />
         </div>
       </div>
-      <button type="submit">Record expense</button>
+      <button type="submit">{paymentStatus === "paid" ? "Record expense" : "Record as unpaid"}</button>
     </form>
+  );
+}
+
+interface UnpaidExpense {
+  id: string;
+  date: string;
+  amount: string;
+  currencyId: string;
+  categoryId: string;
+}
+
+function UnpaidExpensesPanel({ accounts }: { accounts: Account[] }) {
+  const unpaid = useFetch<UnpaidExpense[]>("/finance/expenses?paymentStatus=unpaid");
+  const categories = useFetch<ExpenseCategory[]>("/settings/expense-categories");
+  const categoryLabel = (id: string) => categories.data?.find((c) => c.id === id)?.label ?? id;
+  const [payingAccountId, setPayingAccountId] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSettle(id: string) {
+    const accountId = payingAccountId[id];
+    if (!accountId) return;
+    setError(null);
+    setBusyId(id);
+    try {
+      await api.post(`/finance/expenses/${id}/settle`, { payingAccountId: accountId });
+      unpaid.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not settle this expense");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (!unpaid.data || unpaid.data.length === 0) return null;
+
+  return (
+    <div className="panel" style={{ marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Unpaid expenses (payable)</h3>
+      {error && <div className="error-banner">{error}</div>}
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Amount</th>
+            <th>Settle from</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {unpaid.data.map((e) => (
+            <tr key={e.id}>
+              <td>{new Date(e.date).toLocaleDateString()}</td>
+              <td>{categoryLabel(e.categoryId)}</td>
+              <td>{Number(e.amount).toLocaleString()}</td>
+              <td>
+                <select
+                  value={payingAccountId[e.id] ?? ""}
+                  onChange={(ev) => setPayingAccountId((prev) => ({ ...prev, [e.id]: ev.target.value }))}
+                >
+                  <option value="">Select account...</option>
+                  {accounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </td>
+              <td>
+                <button disabled={!payingAccountId[e.id] || busyId === e.id} onClick={() => handleSettle(e.id)}>
+                  {busyId === e.id ? "..." : "Mark paid"}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

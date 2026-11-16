@@ -137,6 +137,36 @@ export async function postExpense(expenseId: string) {
   });
 }
 
+/**
+ * Settles a previously-unpaid expense: Dr Accounts Payable (what's owed
+ * goes down), Cr the account the money actually left from. Posted as its
+ * own document (relatedDocumentId is the expense id with a "-settlement"
+ * suffix, since the original Expense id is already used by postExpense's
+ * own posting and postBalanced refuses to post the same document twice).
+ * Flips the Expense's own paymentStatus to "paid" so it stops showing as
+ * outstanding, and records which account actually paid it.
+ */
+export async function settleExpensePayment(expenseId: string, payingAccountId: string) {
+  const expense = await prisma.expense.findUniqueOrThrow({ where: { id: expenseId } });
+  if (expense.paymentStatus !== "unpaid") {
+    throw new Error("Only an unpaid expense can be settled");
+  }
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+  assertPkr(expense.currencyId, pkr.id, "settleExpensePayment");
+
+  const accountsPayable = await controlAccount("ACCOUNTS_PAYABLE");
+  await postBalanced({
+    relatedDocumentType: "Expense",
+    relatedDocumentId: `${expense.id}-settlement`,
+    entries: [
+      { accountId: accountsPayable.id, direction: "debit", amount: expense.amount, currencyId: pkr.id },
+      { accountId: payingAccountId, direction: "credit", amount: expense.amount, currencyId: pkr.id },
+    ],
+  });
+
+  return prisma.expense.update({ where: { id: expense.id }, data: { paymentStatus: "paid", accountId: payingAccountId } });
+}
+
 /** Dr Supplier Advances (prepaid asset), Cr the bank/cash account the payment left from. */
 export async function postSupplierAdvance(advanceId: string) {
   const advance = await prisma.supplierAdvance.findUniqueOrThrow({ where: { id: advanceId } });
