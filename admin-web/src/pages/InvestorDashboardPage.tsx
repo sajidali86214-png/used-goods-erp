@@ -23,6 +23,20 @@ interface Capital {
   totalDistributed: string;
   remainingPayable: string;
 }
+interface InventoryByCategoryLine {
+  categoryId: string;
+  categoryName: string;
+  quantityRemaining: string;
+  value: string;
+  contributionPct: string;
+}
+interface InventoryBySkuLine {
+  skuCode: string;
+  name: string;
+  onHandQty: string;
+  gradeBreakdown: { gradeCode: string; qty: string }[];
+  totalValue: string | null;
+}
 interface InvestorDashboard {
   investor: { id: string; name: string; profitSharePercent: string; profitShareBasis: string };
   periodFrom: string | null;
@@ -31,6 +45,8 @@ interface InvestorDashboard {
   profitShareAmount: string;
   capital: Capital;
   currentInventoryValue: string;
+  inventoryByCategory: InventoryByCategoryLine[];
+  inventoryBySkuAndGrade: InventoryBySkuLine[];
   expensesByCategory: ExpenseCategoryLine[];
   totalExpenses: string;
   cashAndBankBalance: string;
@@ -229,6 +245,8 @@ export function InvestorDashboardPage() {
             <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Inventory value is a point-in-time snapshot, as of now — not limited to the selected period.</p>
           </div>
 
+          <InventoryBreakdownPanel byCategory={dashboard.data.inventoryByCategory} bySku={dashboard.data.inventoryBySkuAndGrade} />
+
           <div className="panel">
             <h3>Expenses by category</h3>
             {dashboard.data.expensesByCategory.length === 0 && <p style={{ color: "var(--text-muted)" }}>No posted expenses in this period.</p>}
@@ -256,6 +274,67 @@ export function InvestorDashboardPage() {
             )}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function InventoryBreakdownPanel({ byCategory, bySku }: { byCategory: InventoryByCategoryLine[]; bySku: InventoryBySkuLine[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="panel">
+      <h3>Inventory breakdown</h3>
+      {byCategory.length === 0 ? (
+        <p style={{ color: "var(--text-muted)" }}>No inventory on hand.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Qty remaining</th>
+              <th>Value (PKR)</th>
+              <th>% of total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {byCategory.map((l) => (
+              <tr key={l.categoryId}>
+                <td>{l.categoryName}</td>
+                <td>{fmt(l.quantityRemaining)}</td>
+                <td>{fmt(l.value)}</td>
+                <td>{Number(l.contributionPct)}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <button className="secondary" style={{ marginTop: 8 }} onClick={() => setExpanded((v) => !v)}>
+        {expanded ? "Hide SKU / grade detail" : "Show SKU / grade detail"}
+      </button>
+      {expanded && (
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Name</th>
+              <th>On hand</th>
+              <th>Grade breakdown</th>
+              <th>Value (PKR)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bySku.map((r) => (
+              <tr key={r.skuCode}>
+                <td>{r.skuCode}</td>
+                <td>{r.name}</td>
+                <td>{fmt(r.onHandQty)}</td>
+                <td>{r.gradeBreakdown.map((g) => `${g.gradeCode}:${g.qty}`).join(" ")}</td>
+                <td>{r.totalValue !== null ? fmt(r.totalValue) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );

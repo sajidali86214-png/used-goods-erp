@@ -1,6 +1,12 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
-import { getFinancialSummary, getInventoryValuation, getExpensesByCategory } from "../reports/reportService.js";
+import {
+  getFinancialSummary,
+  getInventoryValuation,
+  getExpensesByCategory,
+  getInventoryValueByCategory,
+  getInventoryOverview,
+} from "../reports/reportService.js";
 import { getAccountBalance } from "../finance/ledgerService.js";
 
 export async function listInvestors() {
@@ -77,13 +83,16 @@ async function totalCashAndBankBalance(): Promise<Decimal> {
 export async function getInvestorDashboard(params: { investorId: string; from?: Date; to?: Date }) {
   const investor = await prisma.investor.findUniqueOrThrow({ where: { id: params.investorId } });
 
-  const [financialSummary, inventoryValuation, expensesByCategory, transactions, cashAndBankBalance] = await Promise.all([
-    getFinancialSummary({ from: params.from, to: params.to }),
-    getInventoryValuation(),
-    getExpensesByCategory({ from: params.from, to: params.to }),
-    prisma.investorTransaction.findMany({ where: { investorId: params.investorId } }),
-    totalCashAndBankBalance(),
-  ]);
+  const [financialSummary, inventoryValuation, inventoryByCategory, inventoryBySkuAndGrade, expensesByCategory, transactions, cashAndBankBalance] =
+    await Promise.all([
+      getFinancialSummary({ from: params.from, to: params.to }),
+      getInventoryValuation(),
+      getInventoryValueByCategory(),
+      getInventoryOverview({ includeCost: true }),
+      getExpensesByCategory({ from: params.from, to: params.to }),
+      prisma.investorTransaction.findMany({ where: { investorId: params.investorId } }),
+      totalCashAndBankBalance(),
+    ]);
 
   const profitSharePercent = investor.profitSharePercent;
   const profitShareBasisAmount =
@@ -108,6 +117,8 @@ export async function getInvestorDashboard(params: { investorId: string; from?: 
     profitShareAmount,
     capital: { totalContributed, totalWithdrawn, totalDistributed, remainingPayable },
     currentInventoryValue: inventoryValuation.totalValue,
+    inventoryByCategory: inventoryByCategory.lines,
+    inventoryBySkuAndGrade: inventoryBySkuAndGrade.rows,
     expensesByCategory: expensesByCategory.lines,
     totalExpenses: expensesByCategory.total,
     cashAndBankBalance,
