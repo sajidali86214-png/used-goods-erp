@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 import { useDraft } from "../lib/useDraft";
+import { DraftStatus } from "../components/DraftStatus";
 
 interface Customer {
   id: string;
@@ -155,7 +156,7 @@ export function SalesOrdersPage() {
   const grades = useFetch<Grade[]>("/settings/grades");
   const accounts = useFetch<Account[]>("/settings/accounts");
 
-  const [draft, setDraft, clearDraft] = useDraft<NewOrderDraft>("new-sales-order", emptyNewOrderDraft());
+  const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<NewOrderDraft>("new-sales-order", emptyNewOrderDraft());
   const { showForm, externalOrderId, customerId, channelId, currencyId, shippingPerUnit, commissionType, commissionValue, lines } = draft;
 
   function patchDraft(patch: Partial<NewOrderDraft>) {
@@ -197,7 +198,7 @@ export function SalesOrdersPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [showNewCustomer, setShowNewCustomer] = useState(false);
-  const [newCustomerDraft, setNewCustomerDraft, clearNewCustomerDraft] = useDraft<NewCustomerDraft>(
+  const [newCustomerDraft, setNewCustomerDraft, clearNewCustomerDraft, newCustomerDraftSavedAt] = useDraft<NewCustomerDraft>(
     "new-sales-order-customer",
     emptyNewCustomerDraft(),
   );
@@ -370,7 +371,10 @@ export function SalesOrdersPage() {
 
       {showForm && (
         <form className="panel" onSubmit={handleCreate}>
-          <h3>New sales order</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>New sales order</h3>
+            <DraftStatus lastSavedAt={draftSavedAt} />
+          </div>
           <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The order number is assigned automatically once created.</p>
           {error && <div className="error-banner">{error}</div>}
           <div className="form-row">
@@ -405,7 +409,10 @@ export function SalesOrdersPage() {
 
           {showNewCustomer && (
             <div className="panel" style={{ marginBottom: 12 }}>
-              <h4>New customer</h4>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h4 style={{ margin: 0 }}>New customer</h4>
+                <DraftStatus lastSavedAt={newCustomerDraftSavedAt} />
+              </div>
               {customerError && <div className="error-banner">{customerError}</div>}
               <div className="form-row">
                 <div className="field">

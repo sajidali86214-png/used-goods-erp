@@ -3,6 +3,7 @@ import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 import { downloadCsv, toCsv } from "../lib/csv";
 import { useDraft } from "../lib/useDraft";
+import { DraftStatus } from "../components/DraftStatus";
 
 interface Account {
   id: string;
@@ -232,7 +233,7 @@ function emptyExpenseDraft(): ExpenseDraft {
 
 function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies: Currency[] }) {
   const categories = useFetch<ExpenseCategory[]>("/settings/expense-categories");
-  const [draft, setDraft, clearDraft] = useDraft<ExpenseDraft>("new-expense", emptyExpenseDraft());
+  const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<ExpenseDraft>("new-expense", emptyExpenseDraft());
   const { categoryId, accountId, currencyId, amount, paymentStatus } = draft;
   const setCategoryId = (v: string) => setDraft((d) => ({ ...d, categoryId: v }));
   const setAccountId = (v: string) => setDraft((d) => ({ ...d, accountId: v }));
@@ -269,7 +270,10 @@ function ExpenseForm({ accounts, currencies }: { accounts: Account[]; currencies
 
   return (
     <form className="panel" onSubmit={handleSubmit}>
-      <h3>Record an expense</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>Record an expense</h3>
+        <DraftStatus lastSavedAt={draftSavedAt} />
+      </div>
       {error && <div className="error-banner">{error}</div>}
       {success && <div className="success-banner">{success}</div>}
       <div className="form-row">

@@ -5,6 +5,7 @@ import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
 import { PhotoCapture, PhotoThumbnails, type UploadedPhoto } from "../components/PhotoCapture";
 import { useDraft } from "../lib/useDraft";
+import { DraftStatus } from "../components/DraftStatus";
 
 interface Supplier {
   id: string;
@@ -91,7 +92,7 @@ export function PurchasingPage() {
 
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [draft, setDraft, clearDraft] = useDraft<NewPODraft>("new-po", emptyPODraft());
+  const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<NewPODraft>("new-po", emptyPODraft());
   const { showNewPO, supplierId, lines } = draft;
 
   const [showNewSupplier, setShowNewSupplier] = useState(false);
@@ -184,7 +185,10 @@ export function PurchasingPage() {
 
           {showNewPO && (
             <form className="panel" onSubmit={handleCreatePO}>
-              <h3>New purchase order</h3>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <h3 style={{ margin: 0 }}>New purchase order</h3>
+                <DraftStatus lastSavedAt={draftSavedAt} />
+              </div>
               <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The PO number is assigned automatically once created.</p>
               <div className="form-row">
                 <div className="field">
@@ -632,7 +636,7 @@ function ReceiveGrnForm({
   const bins = useFetch<Bin[]>("/settings/bins");
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
-  const [draft, setDraft, clearDraft] = useDraft<ReceiveGrnDraft>("receive-grn", emptyReceiveDraft());
+  const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<ReceiveGrnDraft>("receive-grn", emptyReceiveDraft());
   const { poId, binId, currencyId, lines } = draft;
   const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -764,7 +768,10 @@ function ReceiveGrnForm({
 
   return (
     <form className="panel" onSubmit={handleSubmit}>
-      <h3>Record a goods receipt (GRN)</h3>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <h3 style={{ margin: 0 }}>Record a goods receipt (GRN)</h3>
+        <DraftStatus lastSavedAt={draftSavedAt} />
+      </div>
       {error && <div className="error-banner">{error}</div>}
       {success && <div className="success-banner">{success}</div>}
       <p style={{ color: "var(--text-muted)", fontSize: 12 }}>The GRN number is assigned automatically once recorded.</p>

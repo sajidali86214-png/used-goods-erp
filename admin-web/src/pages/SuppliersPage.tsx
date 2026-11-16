@@ -4,6 +4,7 @@ import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 import { useDraft } from "../lib/useDraft";
+import { DraftStatus } from "../components/DraftStatus";
 import { downloadCsv, toCsv } from "../lib/csv";
 
 interface SupplierStatementLine {
@@ -45,7 +46,7 @@ export function SuppliersPage() {
   const currencies = useFetch<Currency[]>("/settings/currencies");
 
   const [showForm, setShowForm] = useState(false);
-  const [draft, setDraft, clearDraft] = useDraft<NewSupplierDraft>("new-supplier", emptySupplierDraft());
+  const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<NewSupplierDraft>("new-supplier", emptySupplierDraft());
   const { name, defaultCurrencyId, contactPerson, phone } = draft;
   const setName = (v: string) => setDraft((d) => ({ ...d, name: v }));
   const setDefaultCurrencyId = (v: string) => setDraft((d) => ({ ...d, defaultCurrencyId: v }));
@@ -100,7 +101,10 @@ export function SuppliersPage() {
 
       {showForm && (
         <form className="panel" onSubmit={handleCreate}>
-          <h3>New supplier</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>New supplier</h3>
+            <DraftStatus lastSavedAt={draftSavedAt} />
+          </div>
           {error && <div className="error-banner">{error}</div>}
           <div className="form-row">
             <div className="field">

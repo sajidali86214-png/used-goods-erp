@@ -24,9 +24,12 @@ export function useDraft<T>(key: string, initial: T) {
     }
   });
 
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+
   useEffect(() => {
     try {
       localStorage.setItem(storageKey, JSON.stringify(state));
+      setLastSavedAt(new Date());
     } catch {
       // private browsing / quota exceeded — draft persistence is a convenience, not critical
     }
@@ -40,7 +43,8 @@ export function useDraft<T>(key: string, initial: T) {
       // ignore
     }
     setState(initial);
+    setLastSavedAt(null);
   }
 
-  return [state, setState, clearDraft] as const;
+  return [state, setState, clearDraft, lastSavedAt] as const;
 }
