@@ -63,7 +63,7 @@ export async function autoFulfilAndDispatchOrder(orderId: string, actorUserId: s
         quantity: candidate.quantity,
         actorUserId,
       });
-      await postSaleDispatch(shipmentLine.id);
+      await postSaleDispatch(shipmentLine.id, actorUserId);
       dispatched = dispatched.plus(candidate.quantity);
       void reservation;
     }

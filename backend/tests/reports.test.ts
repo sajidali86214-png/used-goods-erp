@@ -70,7 +70,7 @@ describe("reports: stock summary and inventory valuation reconcile with the ledg
       await reserveStock({ orderLineId: line.id, costLayerId: candidate.costLayerId, gradeId: candidate.gradeId, binId: candidate.binId, quantity: candidate.quantity });
       const pick = await pickFromReservation({ orderLineId: line.id, costLayerId: candidate.costLayerId, gradeId: candidate.gradeId, binId: candidate.binId, quantity: candidate.quantity, pickerUserId: user.id });
       const { shipmentLine } = await dispatchPickAllocation({ pickAllocationId: pick.id, quantity: candidate.quantity.toNumber(), actorUserId: user.id });
-      await postSaleDispatch(shipmentLine.id);
+      await postSaleDispatch(shipmentLine.id, user.id);
     }
 
     const after = await getFinancialSummary({});

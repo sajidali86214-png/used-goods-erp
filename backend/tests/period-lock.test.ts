@@ -31,12 +31,12 @@ describe("period lock: no posting into a locked period until it's reopened", () 
       data: { date: now, payeeType: "other", categoryId: category.id, currencyId: pkr.id, amount: 1000, paymentStatus: "paid", accountId: bank.id },
     });
 
-    await expect(postExpense(expense.id)).rejects.toThrow(/locked period/);
+    await expect(postExpense(expense.id, user.id)).rejects.toThrow(/locked period/);
 
     const reopened = await reopenPeriod({ periodLockId: lock.id, reopenedByUserId: user.id, reason: "Correcting a missed expense entry" });
     expect(reopened.reopenedAt).not.toBeNull();
 
-    const posted = await postExpense(expense.id);
+    const posted = await postExpense(expense.id, user.id);
     expect(posted).toHaveLength(2);
 
     const auditEvents = await prisma.auditEvent.findMany({

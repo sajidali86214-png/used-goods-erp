@@ -286,7 +286,7 @@ export async function salesRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const body = recordPaymentSchema.parse(request.body);
       try {
-        const result = await recordSalesOrderPayment({ orderId: id, ...body });
+        const result = await recordSalesOrderPayment({ orderId: id, ...body, actorUserId: request.authUser!.id });
         return reply.code(201).send(result);
       } catch (err) {
         // An overpayment/duplicate-entry attempt is a client mistake, not a
@@ -342,7 +342,7 @@ export async function salesRoutes(app: FastifyInstance) {
       let refundError: string | undefined;
       if (refundAmount && refundAmount > 0 && body.refundAccountId) {
         try {
-          await recordSalesOrderRefund({ orderId: id, amount: refundAmount, paymentMethodAccountId: body.refundAccountId });
+          await recordSalesOrderRefund({ orderId: id, amount: refundAmount, paymentMethodAccountId: body.refundAccountId, actorUserId: request.authUser!.id });
         } catch (err) {
           refundError = err instanceof Error ? err.message : "Could not post the refund";
         }
@@ -422,7 +422,7 @@ export async function salesRoutes(app: FastifyInstance) {
       // the manual grade-picker path (restricted-grade lines), the one case
       // autoFulfilAndDispatchOrder deliberately leaves alone; without this it
       // would silently repeat the "no transaction showing in accounts" bug.
-      await postSaleDispatch(result.shipmentLine.id);
+      await postSaleDispatch(result.shipmentLine.id, request.authUser!.id);
       return reply.code(201).send(result);
     },
   );

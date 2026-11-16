@@ -7,9 +7,9 @@ export async function auditRoutes(app: FastifyInstance) {
     "/audit-events",
     { preHandler: requirePermission("audit.view") },
     async (request) => {
-      const { entityType, limit } = request.query as { entityType?: string; limit?: string };
+      const { entityType, entityId, limit } = request.query as { entityType?: string; entityId?: string; limit?: string };
       return prisma.auditEvent.findMany({
-        where: entityType ? { entityType } : undefined,
+        where: { entityType: entityType || undefined, entityId: entityId || undefined },
         orderBy: { createdAt: "desc" },
         take: limit ? Math.min(Number(limit), 500) : 100,
       });

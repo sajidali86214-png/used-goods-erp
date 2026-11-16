@@ -33,6 +33,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
     const bank = await pkrAccount(`Bank-${randomUUID()}`);
     const category = await prisma.expenseCategory.create({ data: { label: "Rent" } });
     const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+    const actor = await prisma.user.create({ data: { name: "Actor", email: `actor-${randomUUID()}@example.com`, passwordHash: "x" } });
 
     const expense = await prisma.expense.create({
       data: {
@@ -47,7 +48,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
     });
 
     const bankBalanceBefore = await getAccountBalance(bank.id);
-    await postExpense(expense.id);
+    await postExpense(expense.id, actor.id);
     const bankBalanceAfter = await getAccountBalance(bank.id);
 
     expect(bankBalanceAfter.toNumber()).toBe(bankBalanceBefore.toNumber() - 15000);
@@ -63,6 +64,9 @@ describe("finance ledger: every posting is balanced and account balances reflect
   it("posts a supplier advance, a customer receipt, and a paid refund correctly", async () => {
     const bank = await pkrAccount(`Bank-${randomUUID()}`);
     const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+    const ledgerTestUser = await prisma.user.create({
+      data: { name: "Ledger Test User", email: `ledger-${randomUUID()}@example.com`, passwordHash: "x" },
+    });
 
     const supplier = await prisma.supplier.create({ data: { name: `Supplier-${randomUUID()}`, defaultCurrencyId: pkr.id } });
     const advance = await prisma.supplierAdvance.create({
@@ -75,7 +79,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
       },
     });
     const balanceBeforeAdvance = await getAccountBalance(bank.id);
-    await postSupplierAdvance(advance.id);
+    await postSupplierAdvance(advance.id, ledgerTestUser.id);
     expect((await getAccountBalance(bank.id)).toNumber()).toBe(balanceBeforeAdvance.toNumber() - 5000);
     const supplierAdvancesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
     expect((await getAccountBalance(supplierAdvancesAccount.id)).toNumber()).toBeGreaterThanOrEqual(5000);
@@ -88,9 +92,6 @@ describe("finance ledger: every posting is balanced and account balances reflect
     });
     const category = await prisma.category.create({ data: { name: `Cat-${randomUUID()}` } });
     const product = await prisma.product.create({ data: { skuCode: `SKU-${randomUUID()}`, name: "P", categoryId: category.id } });
-    const ledgerTestUser = await prisma.user.create({
-      data: { name: "Ledger Test User", email: `ledger-${randomUUID()}@example.com`, passwordHash: "x" },
-    });
     const order = await createDraftOrder({
       channelId: channel.id,
       customerId: customer.id,
@@ -116,13 +117,13 @@ describe("finance ledger: every posting is balanced and account balances reflect
       },
     });
     const balanceBeforeReceipt = await getAccountBalance(bank.id);
-    await postCustomerReceipt(receipt.id);
+    await postCustomerReceipt(receipt.id, ledgerTestUser.id);
     expect((await getAccountBalance(bank.id)).toNumber()).toBe(balanceBeforeReceipt.toNumber() + 1000);
 
     const refund = await createRefund({ orderId: order.id, amount: 200, currencyId: pkr.id });
     await markRefundPaid(refund.id, bank.id);
     const balanceBeforeRefund = await getAccountBalance(bank.id);
-    await postRefund(refund.id);
+    await postRefund(refund.id, ledgerTestUser.id);
     expect((await getAccountBalance(bank.id)).toNumber()).toBe(balanceBeforeRefund.toNumber() - 200);
   });
 
@@ -159,7 +160,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
     for (const pickId of pickIds) {
       const pick = await prisma.pickAllocation.findUniqueOrThrow({ where: { id: pickId } });
       const { shipmentLine } = await dispatchPickAllocation({ pickAllocationId: pickId, quantity: pick.pickedQty.toNumber(), actorUserId: user.id });
-      await postSaleDispatch(shipmentLine.id);
+      await postSaleDispatch(shipmentLine.id, user.id);
     }
 
     const revenueAfter = await getAccountBalance(salesRevenue.id);
@@ -178,20 +179,22 @@ describe("finance ledger: every posting is balanced and account balances reflect
       data: { date: new Date(), payeeType: "other", categoryId: category.id, currencyId: gbp.id, amount: 100, paymentStatus: "paid", accountId: bank.id },
     });
 
-    await expect(postExpense(expense.id)).rejects.toThrow(/accountant-approved FX/);
+    const actor = await prisma.user.create({ data: { name: "Actor", email: `actor-${randomUUID()}@example.com`, passwordHash: "x" } });
+    await expect(postExpense(expense.id, actor.id)).rejects.toThrow(/accountant-approved FX/);
   });
 
   it("posts transfers and owner transactions as balanced entries excluded from P&L accounts", async () => {
     const bankA = await pkrAccount(`Bank-${randomUUID()}`);
     const bankB = await pkrAccount(`Bank-${randomUUID()}`);
     const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+    const actor = await prisma.user.create({ data: { name: "Actor", email: `actor-${randomUUID()}@example.com`, passwordHash: "x" } });
 
     const transfer = await prisma.transfer.create({
       data: { fromAccountId: bankA.id, toAccountId: bankB.id, amount: 2000, currencyId: pkr.id },
     });
     const aBefore = await getAccountBalance(bankA.id);
     const bBefore = await getAccountBalance(bankB.id);
-    await postTransfer(transfer.id);
+    await postTransfer(transfer.id, actor.id);
     expect((await getAccountBalance(bankA.id)).toNumber()).toBe(aBefore.toNumber() - 2000);
     expect((await getAccountBalance(bankB.id)).toNumber()).toBe(bBefore.toNumber() + 2000);
 
@@ -201,7 +204,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
       data: { accountId: bankA.id, amount: 10000, type: "contribution" },
     });
     const bankABefore = await getAccountBalance(bankA.id);
-    await postOwnerTransaction(contribution.id);
+    await postOwnerTransaction(contribution.id, actor.id);
     expect((await getAccountBalance(bankA.id)).toNumber()).toBe(bankABefore.toNumber() + 10000);
     expect((await getAccountBalance(ownersEquity.id)).toNumber()).toBe(equityBefore.toNumber() + 10000);
 

@@ -121,6 +121,7 @@ export async function recordSalesOrderPayment(params: {
   receivedAt: Date;
   destinationAccountId: string;
   bankReference?: string;
+  actorUserId: string;
 }) {
   const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: params.orderId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
@@ -151,7 +152,7 @@ export async function recordSalesOrderPayment(params: {
     allocations: [{ orderId: params.orderId, amount }],
   });
 
-  await postCustomerReceipt(receipt.id);
+  await postCustomerReceipt(receipt.id, params.actorUserId);
 
   const after = await getOrderPaymentSummary(params.orderId);
   const newPaymentStatus = after.outstanding.lessThanOrEqualTo(0)
@@ -181,13 +182,14 @@ export async function recordSalesOrderRefund(params: {
   orderId: string;
   amount: Decimal | number;
   paymentMethodAccountId: string;
+  actorUserId: string;
 }) {
   const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: params.orderId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
 
   const refund = await createRefund({ orderId: order.id, amount: params.amount, currencyId: pkr.id });
   await markRefundPaid(refund.id, params.paymentMethodAccountId);
-  await postRefund(refund.id);
+  await postRefund(refund.id, params.actorUserId);
   return refund;
 }
 
@@ -203,6 +205,7 @@ export async function recordTransfer(params: {
   toAccountId: string;
   amount: Decimal | number;
   occurredAt?: Date;
+  actorUserId: string;
 }) {
   if (params.fromAccountId === params.toAccountId) {
     throw new Error("A transfer must move money between two different accounts");
@@ -218,6 +221,6 @@ export async function recordTransfer(params: {
       occurredAt: params.occurredAt ?? new Date(),
     },
   });
-  await postTransfer(transfer.id);
+  await postTransfer(transfer.id, params.actorUserId);
   return transfer;
 }

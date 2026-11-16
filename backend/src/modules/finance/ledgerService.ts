@@ -46,6 +46,7 @@ export async function postBalanced(params: {
   entries: LedgerEntryInput[];
   relatedDocumentType: string;
   relatedDocumentId: string;
+  actorUserId: string;
   postedAt?: Date;
 }) {
   const postedAt = params.postedAt ?? new Date();
@@ -80,7 +81,7 @@ export async function postBalanced(params: {
       throw new Error(`${params.relatedDocumentType} ${params.relatedDocumentId} has already been posted to the ledger`);
     }
 
-    return Promise.all(
+    const created = await Promise.all(
       params.entries.map((e) =>
         tx.ledgerEntry.create({
           data: {
@@ -95,6 +96,27 @@ export async function postBalanced(params: {
         }),
       ),
     );
+
+    // Every ledger posting writes its own audit event — previously none did,
+    // making the most money-sensitive code in the system the least audited.
+    await tx.auditEvent.create({
+      data: {
+        entityType: params.relatedDocumentType,
+        entityId: params.relatedDocumentId,
+        action: "post_ledger_entries",
+        actorUserId: params.actorUserId,
+        afterJson: {
+          entries: params.entries.map((e) => ({
+            accountId: e.accountId,
+            direction: e.direction,
+            amount: new Decimal(e.amount).toString(),
+            currencyId: e.currencyId,
+          })),
+        },
+      },
+    });
+
+    return created;
   });
 }
 
@@ -118,7 +140,7 @@ function assertPkr(currencyId: string, pkrCurrencyId: string, context: string) {
 }
 
 /** Dr Operating Expenses (or the bank account directly skips AP), Cr the paying account or Accounts Payable if unpaid. */
-export async function postExpense(expenseId: string) {
+export async function postExpense(expenseId: string, actorUserId: string) {
   const expense = await prisma.expense.findUniqueOrThrow({ where: { id: expenseId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   assertPkr(expense.currencyId, pkr.id, "postExpense");
@@ -130,6 +152,7 @@ export async function postExpense(expenseId: string) {
   return postBalanced({
     relatedDocumentType: "Expense",
     relatedDocumentId: expense.id,
+    actorUserId,
     entries: [
       { accountId: operatingExpenses.id, direction: "debit", amount: expense.amount, currencyId: pkr.id },
       { accountId: creditAccountId, direction: "credit", amount: expense.amount, currencyId: pkr.id },
@@ -146,7 +169,7 @@ export async function postExpense(expenseId: string) {
  * Flips the Expense's own paymentStatus to "paid" so it stops showing as
  * outstanding, and records which account actually paid it.
  */
-export async function settleExpensePayment(expenseId: string, payingAccountId: string) {
+export async function settleExpensePayment(expenseId: string, payingAccountId: string, actorUserId: string) {
   const expense = await prisma.expense.findUniqueOrThrow({ where: { id: expenseId } });
   if (expense.paymentStatus !== "unpaid") {
     throw new Error("Only an unpaid expense can be settled");
@@ -158,6 +181,7 @@ export async function settleExpensePayment(expenseId: string, payingAccountId: s
   await postBalanced({
     relatedDocumentType: "Expense",
     relatedDocumentId: `${expense.id}-settlement`,
+    actorUserId,
     entries: [
       { accountId: accountsPayable.id, direction: "debit", amount: expense.amount, currencyId: pkr.id },
       { accountId: payingAccountId, direction: "credit", amount: expense.amount, currencyId: pkr.id },
@@ -168,7 +192,7 @@ export async function settleExpensePayment(expenseId: string, payingAccountId: s
 }
 
 /** Dr Supplier Advances (prepaid asset), Cr the bank/cash account the payment left from. */
-export async function postSupplierAdvance(advanceId: string) {
+export async function postSupplierAdvance(advanceId: string, actorUserId: string) {
   const advance = await prisma.supplierAdvance.findUniqueOrThrow({ where: { id: advanceId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   assertPkr(advance.currencyId, pkr.id, "postSupplierAdvance");
@@ -178,6 +202,7 @@ export async function postSupplierAdvance(advanceId: string) {
   return postBalanced({
     relatedDocumentType: "SupplierAdvance",
     relatedDocumentId: advance.id,
+    actorUserId,
     entries: [
       { accountId: supplierAdvances.id, direction: "debit", amount: advance.amount, currencyId: pkr.id },
       { accountId: advance.paymentMethodAccountId, direction: "credit", amount: advance.amount, currencyId: pkr.id },
@@ -186,7 +211,7 @@ export async function postSupplierAdvance(advanceId: string) {
 }
 
 /** Dr the destination bank/cash account, Cr Accounts Receivable. */
-export async function postCustomerReceipt(receiptId: string) {
+export async function postCustomerReceipt(receiptId: string, actorUserId: string) {
   const receipt = await prisma.paymentReceipt.findUniqueOrThrow({ where: { id: receiptId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   assertPkr(receipt.currencyId, pkr.id, "postCustomerReceipt");
@@ -196,6 +221,7 @@ export async function postCustomerReceipt(receiptId: string) {
   return postBalanced({
     relatedDocumentType: "PaymentReceipt",
     relatedDocumentId: receipt.id,
+    actorUserId,
     entries: [
       { accountId: receipt.destinationAccountId, direction: "debit", amount: receipt.amount, currencyId: pkr.id },
       { accountId: accountsReceivable.id, direction: "credit", amount: receipt.amount, currencyId: pkr.id },
@@ -204,7 +230,7 @@ export async function postCustomerReceipt(receiptId: string) {
 }
 
 /** Dr Sales Returns, Cr the refunding bank/cash account (only once actually paid). */
-export async function postRefund(refundId: string) {
+export async function postRefund(refundId: string, actorUserId: string) {
   const refund = await prisma.refund.findUniqueOrThrow({ where: { id: refundId } });
   if (refund.status !== "refunded" || !refund.paymentMethodAccountId) {
     throw new Error("Only a refund that has actually been paid can be posted");
@@ -217,6 +243,7 @@ export async function postRefund(refundId: string) {
   return postBalanced({
     relatedDocumentType: "Refund",
     relatedDocumentId: refund.id,
+    actorUserId,
     entries: [
       { accountId: salesReturns.id, direction: "debit", amount: refund.amount, currencyId: pkr.id },
       { accountId: refund.paymentMethodAccountId, direction: "credit", amount: refund.amount, currencyId: pkr.id },
@@ -231,7 +258,7 @@ export async function postRefund(refundId: string) {
  * uses the actual cost layer the dispatched pieces came from (never the
  * product's latest purchase price — spec section 12).
  */
-export async function postSaleDispatch(shipmentLineId: string) {
+export async function postSaleDispatch(shipmentLineId: string, actorUserId: string) {
   const shipmentLine = await prisma.shipmentLine.findUniqueOrThrow({
     where: { id: shipmentLineId },
     include: {
@@ -271,11 +298,12 @@ export async function postSaleDispatch(shipmentLineId: string) {
   return postBalanced({
     relatedDocumentType: "ShipmentLine",
     relatedDocumentId: shipmentLine.id,
+    actorUserId,
     entries,
   });
 }
 
-export async function postTransfer(transferId: string) {
+export async function postTransfer(transferId: string, actorUserId: string) {
   const transfer = await prisma.transfer.findUniqueOrThrow({ where: { id: transferId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   assertPkr(transfer.currencyId, pkr.id, "postTransfer");
@@ -283,6 +311,7 @@ export async function postTransfer(transferId: string) {
   return postBalanced({
     relatedDocumentType: "Transfer",
     relatedDocumentId: transfer.id,
+    actorUserId,
     entries: [
       { accountId: transfer.toAccountId, direction: "debit", amount: transfer.amount, currencyId: pkr.id },
       { accountId: transfer.fromAccountId, direction: "credit", amount: transfer.amount, currencyId: pkr.id },
@@ -297,7 +326,7 @@ export async function postTransfer(transferId: string) {
  * that money through trading, so it has to enter the books some way other
  * than revenue, and crediting Owner's Equity is the standard treatment.
  */
-export async function postOwnerTransaction(ownerTransactionId: string) {
+export async function postOwnerTransaction(ownerTransactionId: string, actorUserId: string) {
   const tx = await prisma.ownerTransaction.findUniqueOrThrow({ where: { id: ownerTransactionId } });
   const account = await prisma.account.findUniqueOrThrow({ where: { id: tx.accountId } });
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
@@ -308,6 +337,7 @@ export async function postOwnerTransaction(ownerTransactionId: string) {
   return postBalanced({
     relatedDocumentType: "OwnerTransaction",
     relatedDocumentId: tx.id,
+    actorUserId,
     entries: isContribution
       ? [
           { accountId: tx.accountId, direction: "debit", amount: tx.amount, currencyId: pkr.id },

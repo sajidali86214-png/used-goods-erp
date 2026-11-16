@@ -256,7 +256,7 @@ export async function purchasingRoutes(app: FastifyInstance) {
       // detect or retry a failure between them, so an advance could exist
       // unposted with no account impact. Same bug class as the sales-
       // dispatch gap fixed earlier this session, fixed the same way.
-      await postSupplierAdvance(advance.id);
+      await postSupplierAdvance(advance.id, request.authUser!.id);
       return reply.code(201).send(advance);
     },
   );

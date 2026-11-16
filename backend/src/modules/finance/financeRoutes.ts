@@ -90,7 +90,7 @@ export async function financeRoutes(app: FastifyInstance) {
       // separate call to /finance/post/expenses/:id left an expense that
       // could exist with no ledger impact if that second call never
       // happened.
-      await postExpense(expense.id);
+      await postExpense(expense.id, request.authUser!.id);
       return reply.code(201).send(expense);
     },
   );
@@ -116,7 +116,7 @@ export async function financeRoutes(app: FastifyInstance) {
       const { id } = request.params as { id: string };
       const body = z.object({ payingAccountId: z.string().uuid() }).parse(request.body);
       try {
-        const expense = await settleExpensePayment(id, body.payingAccountId);
+        const expense = await settleExpensePayment(id, body.payingAccountId, request.authUser!.id);
         return reply.send(expense);
       } catch (err) {
         return reply.code(409).send({ error: err instanceof Error ? err.message : "could_not_settle" });
@@ -138,7 +138,7 @@ export async function financeRoutes(app: FastifyInstance) {
       const tx = await prisma.ownerTransaction.create({
         data: { ...body, amount: new Decimal(body.amount) },
       });
-      await postOwnerTransaction(tx.id);
+      await postOwnerTransaction(tx.id, request.authUser!.id);
       return reply.code(201).send(tx);
     },
   );
@@ -149,7 +149,7 @@ export async function financeRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = createTransferSchema.parse(request.body);
       try {
-        const transfer = await recordTransfer(body);
+        const transfer = await recordTransfer({ ...body, actorUserId: request.authUser!.id });
         return reply.code(201).send(transfer);
       } catch (err) {
         return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_transfer" });
@@ -185,6 +185,12 @@ export async function financeRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const body = receiptSchema.parse(request.body);
       const receipt = await recordCustomerReceipt(body);
+      // This form had no way to post the receipt at all — it created a
+      // PaymentReceipt/PaymentAllocation that getCustomerBalances would
+      // already count as "received", but with zero ledger entries, so it
+      // never touched any account's actual balance or the AR account.
+      // Posts immediately now, same as every other receipt-creating path.
+      await postCustomerReceipt(receipt.id, request.authUser!.id);
       return reply.code(201).send(receipt);
     },
   );
@@ -209,10 +215,10 @@ export async function financeRoutes(app: FastifyInstance) {
     },
   );
 
-  const postById = (fn: (id: string) => Promise<unknown>) =>
+  const postById = (fn: (id: string, actorUserId: string) => Promise<unknown>) =>
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { id } = request.params as { id: string };
-      const result = await fn(id);
+      const result = await fn(id, request.authUser!.id);
       return reply.code(201).send(result);
     };
 
