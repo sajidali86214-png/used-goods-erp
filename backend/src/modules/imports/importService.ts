@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal } from "../../lib/money.js";
 import { randomUUID } from "node:crypto";
+import { runSerializable } from "../../lib/transaction.js";
 
 export interface ProductImportRow {
   skuCode: string;
@@ -369,9 +370,15 @@ export async function commitOpeningStockImport(params: {
     });
   }
 
+  // runSerializable, not a plain prisma.$transaction — every other
+  // stock-mutating path in this codebase goes through the same SERIALIZABLE
+  // isolation + conflict retry; this one didn't, which was inconsistent
+  // even though this particular import only ever creates fresh positive
+  // balances (never decrements anything, so it couldn't itself drive stock
+  // negative) — closing the gap rather than leaving a documented exception.
   let createdCount = 0;
   for (const r of validRows) {
-    await prisma.$transaction(async (tx) => {
+    await runSerializable(async (tx) => {
       const lot = await tx.lot.create({
         data: {
           lotCode: `OPENING-${r.data.skuCode}-${randomUUID().slice(0, 8)}`,
