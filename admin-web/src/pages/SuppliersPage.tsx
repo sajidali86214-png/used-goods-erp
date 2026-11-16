@@ -4,6 +4,15 @@ import { useFetch } from "../api/useFetch";
 import { useDebouncedValue } from "../api/useDebouncedValue";
 import { api, ApiError } from "../api/client";
 import { useDraft } from "../lib/useDraft";
+import { downloadCsv, toCsv } from "../lib/csv";
+
+interface SupplierStatementLine {
+  date: string;
+  type: string;
+  description: string;
+  amount: string;
+  runningBalance: string;
+}
 
 interface NewSupplierDraft {
   name: string;
@@ -44,6 +53,25 @@ export function SuppliersPage() {
   const setPhone = (v: string) => setDraft((d) => ({ ...d, phone: v }));
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  async function handleDownloadStatement(supplierId: string, supplierName: string) {
+    try {
+      const statement = await api.get<{ lines: SupplierStatementLine[] }>(`/reports/suppliers/${supplierId}/statement`);
+      const columns: { header: string; value: (l: SupplierStatementLine) => string | number }[] = [
+        { header: "Date", value: (l) => new Date(l.date).toLocaleDateString() },
+        { header: "Type", value: (l) => l.type },
+        { header: "Description", value: (l) => l.description },
+        { header: "Amount", value: (l) => l.amount },
+        { header: "Running balance", value: (l) => l.runningBalance },
+      ];
+      downloadCsv(
+        `${supplierName.replace(/\s+/g, "-")}-statement-${new Date().toISOString().slice(0, 10)}.csv`,
+        toCsv(statement.lines, columns),
+      );
+    } catch {
+      // Download is a convenience action off a list row; a failed fetch here isn't worth a dedicated error banner.
+    }
+  }
 
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
@@ -122,6 +150,7 @@ export function SuppliersPage() {
                 <th>Contact</th>
                 <th>Phone</th>
                 <th>Status</th>
+                {has("supplier.payment_details.view") && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -133,6 +162,13 @@ export function SuppliersPage() {
                   <td>
                     <span className="badge">{s.isActive ? "active" : "inactive"}</span>
                   </td>
+                  {has("supplier.payment_details.view") && (
+                    <td>
+                      <button className="secondary" onClick={() => handleDownloadStatement(s.id, s.name)}>
+                        Statement
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

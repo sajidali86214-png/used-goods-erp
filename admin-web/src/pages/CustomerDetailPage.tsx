@@ -3,6 +3,15 @@ import { useParams, Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+import { downloadCsv, toCsv } from "../lib/csv";
+
+interface StatementLine {
+  date: string;
+  type: string;
+  description: string;
+  amount: string;
+  runningBalance: string;
+}
 
 interface CustomerOrder {
   id: string;
@@ -53,6 +62,24 @@ export function CustomerDetailPage() {
       setNotes(customer.data.notes ?? "");
     }
   }, [customer.data]);
+
+  async function handleDownloadStatement(customerId: string, customerName: string) {
+    try {
+      const statement = await api.get<{ lines: StatementLine[]; closingOutstanding: string }>(
+        `/reports/customers/${customerId}/statement`,
+      );
+      const columns: { header: string; value: (l: StatementLine) => string | number }[] = [
+        { header: "Date", value: (l) => new Date(l.date).toLocaleDateString() },
+        { header: "Type", value: (l) => l.type },
+        { header: "Description", value: (l) => l.description },
+        { header: "Amount", value: (l) => l.amount },
+        { header: "Running balance", value: (l) => l.runningBalance },
+      ];
+      downloadCsv(`${customerName.replace(/\s+/g, "-")}-statement-${new Date().toISOString().slice(0, 10)}.csv`, toCsv(statement.lines, columns));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not download statement");
+    }
+  }
 
   async function handleSave(e: FormEvent) {
     e.preventDefault();
@@ -159,7 +186,14 @@ export function CustomerDetailPage() {
       )}
 
       <div className="panel">
-        <h3>Balance</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3 style={{ margin: 0 }}>Balance</h3>
+          {has("profit.view") && (
+            <button className="secondary" onClick={() => handleDownloadStatement(c.id, c.name)}>
+              Download statement
+            </button>
+          )}
+        </div>
         <div className="form-row">
           <div>
             <strong>Booked value</strong>

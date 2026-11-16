@@ -430,6 +430,44 @@ export async function getSupplierBalances() {
 }
 
 /**
+ * Chronological supplier statement: each advance paid (increases the
+ * unapplied-advance balance) and each invoice match (reduces it), running
+ * balance alongside — spec section 12's "supplier statement". Only covers
+ * the advance/invoice-match flow, since that's the only supplier payment
+ * path this system actually posts; a SupplierPayment record made directly
+ * against an invoice outside that flow has no creation path yet, so there
+ * is nothing to omit, not a gap in this statement itself.
+ */
+export async function getSupplierStatement(supplierId: string) {
+  const supplier = await prisma.supplier.findUniqueOrThrow({ where: { id: supplierId } });
+  const advances = await prisma.supplierAdvance.findMany({ where: { supplierId }, include: { po: true } });
+  const invoices = await prisma.supplierInvoice.findMany({ where: { supplierId, matchedAdvance: { gt: 0 } }, include: { po: true } });
+
+  const events = [
+    ...advances.map((a) => ({
+      date: a.paidAt,
+      type: "advance_paid" as const,
+      description: `Advance paid${a.po ? ` against ${a.po.poNumber}` : ""}${a.reference ? ` (${a.reference})` : ""}`,
+      amount: a.amount,
+    })),
+    ...invoices.map((i) => ({
+      date: i.invoiceDate,
+      type: "invoice_matched" as const,
+      description: `Invoice${i.po ? ` for ${i.po.poNumber}` : ""} matched against advance`,
+      amount: i.matchedAdvance.negated(),
+    })),
+  ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  let runningBalance = new Decimal(0);
+  const lines = events.map((e) => {
+    runningBalance = runningBalance.plus(e.amount);
+    return { ...e, runningBalance };
+  });
+
+  return { supplierId: supplier.id, supplierName: supplier.name, lines, closingUnappliedAdvance: runningBalance };
+}
+
+/**
  * Per-customer: booked order value — net of each order's discount, shipping,
  * and commission (what the customer is actually expected to pay, matching
  * computeOrderCostSummary's netTotal — not bundle-allocation-aware, a
@@ -478,6 +516,57 @@ export async function getCustomerBalances() {
   }
 
   return results;
+}
+
+/**
+ * Chronological customer statement: each order booked (increases what they
+ * owe) and each real payment received (decreases it), running balance
+ * alongside — spec section 12's "customer statement". Uses the same
+ * manual-override-first precedence as getOrderPaymentSummary so a
+ * quick-popup-recorded order doesn't double-count here either.
+ */
+export async function getCustomerStatement(customerId: string) {
+  const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId } });
+  const orders = await prisma.salesOrder.findMany({ where: { customerId }, include: { lines: true } });
+
+  const allocations = await prisma.paymentAllocation.findMany({
+    where: { orderId: { in: orders.filter((o) => o.paymentReceivedAmount === null).map((o) => o.id) } },
+    include: { paymentReceipt: true },
+  });
+
+  const events: { date: Date; type: "order_booked" | "payment_received"; description: string; amount: Decimal }[] = [];
+  for (const order of orders) {
+    const netTotal = computeOrderCostSummary(order).netTotal;
+    if (netTotal.greaterThan(0)) {
+      events.push({ date: order.createdAt, type: "order_booked", description: `Order ${order.orderNumber} booked`, amount: netTotal });
+    }
+    if (order.paymentReceivedAmount !== null && order.paymentReceivedAmount.greaterThan(0)) {
+      events.push({
+        date: order.createdAt,
+        type: "payment_received",
+        description: `Payment recorded against ${order.orderNumber} (quick entry)`,
+        amount: order.paymentReceivedAmount.negated(),
+      });
+    } else {
+      for (const a of allocations.filter((a) => a.orderId === order.id)) {
+        events.push({
+          date: a.paymentReceipt.receivedAt,
+          type: "payment_received",
+          description: `Payment received against ${order.orderNumber}${a.paymentReceipt.bankReference ? ` (${a.paymentReceipt.bankReference})` : ""}`,
+          amount: a.amount.negated(),
+        });
+      }
+    }
+  }
+  events.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+  let runningBalance = new Decimal(0);
+  const lines = events.map((e) => {
+    runningBalance = runningBalance.plus(e.amount);
+    return { ...e, runningBalance };
+  });
+
+  return { customerId: customer.id, customerName: customer.name, lines, closingOutstanding: runningBalance };
 }
 
 async function sumEntriesForAccountCode(code: string, params: { from?: Date; to?: Date }) {

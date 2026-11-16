@@ -14,7 +14,9 @@ import {
   getFinancialSummary,
   getStockAging,
   getSupplierBalances,
+  getSupplierStatement,
   getCustomerBalances,
+  getCustomerStatement,
   getStockLevelsByProduct,
   getProductStockDetail,
 } from "./reportService.js";
@@ -110,8 +112,24 @@ export async function reportRoutes(app: FastifyInstance) {
     async () => getSupplierBalances(),
   );
   app.get(
+    "/reports/suppliers/:id/statement",
+    { preHandler: requirePermission("supplier.payment_details.view") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getSupplierStatement(id);
+    },
+  );
+  app.get(
     "/reports/customer-balances",
     { preHandler: requirePermission("profit.view") },
     async () => getCustomerBalances(),
+  );
+  app.get(
+    "/reports/customers/:id/statement",
+    { preHandler: requirePermission("profit.view") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getCustomerStatement(id);
+    },
   );
 }
