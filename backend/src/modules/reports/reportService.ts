@@ -412,9 +412,11 @@ export async function getSupplierBalances() {
   for (const supplier of suppliers) {
     const advances = await prisma.supplierAdvance.findMany({ where: { supplierId: supplier.id } });
     const invoices = await prisma.supplierInvoice.findMany({ where: { supplierId: supplier.id } });
+    const credits = await prisma.supplierCredit.findMany({ where: { supplierId: supplier.id } });
     const totalAdvancesPaid = sumDecimal(advances.map((a) => a.amount));
     const totalMatched = sumDecimal(invoices.map((i) => i.matchedAdvance));
-    const unappliedAdvance = totalAdvancesPaid.minus(totalMatched);
+    const totalCredited = sumDecimal(credits.map((c) => c.amount));
+    const unappliedAdvance = totalAdvancesPaid.minus(totalMatched).plus(totalCredited);
 
     const openPos = await prisma.purchaseOrder.findMany({
       where: { supplierId: supplier.id, status: { in: ["draft", "approved"] } },
@@ -431,7 +433,7 @@ export async function getSupplierBalances() {
       if (hasOutstanding) openPoCount += 1;
     }
 
-    if (totalAdvancesPaid.greaterThan(0) || openPoCount > 0) {
+    if (totalAdvancesPaid.greaterThan(0) || totalCredited.greaterThan(0) || openPoCount > 0) {
       results.push({ supplierId: supplier.id, supplierName: supplier.name, totalAdvancesPaid, unappliedAdvance, openPoCount });
     }
   }
@@ -440,18 +442,20 @@ export async function getSupplierBalances() {
 }
 
 /**
- * Chronological supplier statement: each advance paid (increases the
- * unapplied-advance balance) and each invoice match (reduces it), running
- * balance alongside — spec section 12's "supplier statement". Only covers
- * the advance/invoice-match flow, since that's the only supplier payment
- * path this system actually posts; a SupplierPayment record made directly
- * against an invoice outside that flow has no creation path yet, so there
- * is nothing to omit, not a gap in this statement itself.
+ * Chronological supplier statement: each advance paid and each credit
+ * received (both increase the unapplied-advance balance) and each invoice
+ * match (reduces it), running balance alongside — spec section 12's
+ * "supplier statement". Only covers the advance/invoice-match/credit flow,
+ * since that's the only supplier payment path this system actually posts;
+ * a SupplierPayment record made directly against an invoice outside that
+ * flow has no creation path yet, so there is nothing to omit, not a gap in
+ * this statement itself.
  */
 export async function getSupplierStatement(supplierId: string) {
   const supplier = await prisma.supplier.findUniqueOrThrow({ where: { id: supplierId } });
   const advances = await prisma.supplierAdvance.findMany({ where: { supplierId }, include: { po: true } });
   const invoices = await prisma.supplierInvoice.findMany({ where: { supplierId, matchedAdvance: { gt: 0 } }, include: { po: true } });
+  const credits = await prisma.supplierCredit.findMany({ where: { supplierId }, include: { po: true } });
 
   const events = [
     ...advances.map((a) => ({
@@ -465,6 +469,12 @@ export async function getSupplierStatement(supplierId: string) {
       type: "invoice_matched" as const,
       description: `Invoice${i.po ? ` for ${i.po.poNumber}` : ""} matched against advance`,
       amount: i.matchedAdvance.negated(),
+    })),
+    ...credits.map((c) => ({
+      date: c.receivedAt,
+      type: "credit_received" as const,
+      description: `Credit received${c.po ? ` against ${c.po.poNumber}` : ""} — ${c.reason}`,
+      amount: c.amount,
     })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
 

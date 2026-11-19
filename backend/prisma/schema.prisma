@@ -315,6 +315,7 @@ model Supplier {
   advances       SupplierAdvance[]
   invoices       SupplierInvoice[]
   payments       SupplierPayment[]
+  credits        SupplierCredit[]
   grns           GRN[]
   lots           Lot[]
 }
@@ -334,6 +335,7 @@ model PurchaseOrder {
   lines    PurchaseOrderLine[]
   advances SupplierAdvance[]
   invoices SupplierInvoice[]
+  credits  SupplierCredit[]
 }
 
 model PurchaseOrderLine {
@@ -394,6 +396,25 @@ model SupplierPayment {
 
   supplier Supplier         @relation(fields: [supplierId], references: [id])
   invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id])
+}
+
+// Money or a credit a supplier gives back to us — overpayment, returned
+// goods, a price adjustment. Posted as Dr the receiving account, Cr
+// Supplier Advances (reverses part of what we're effectively owed back),
+// so it shows up in the same unapplied-advance balance a real advance does.
+model SupplierCredit {
+  id                 String   @id @default(uuid())
+  supplierId         String
+  poId               String?
+  currencyId         String
+  amount             Decimal  @db.Decimal(18, 4)
+  receivedAt         DateTime
+  receivingAccountId String
+  reason             String
+  createdAt          DateTime @default(now())
+
+  supplier Supplier       @relation(fields: [supplierId], references: [id])
+  po       PurchaseOrder? @relation(fields: [poId], references: [id])
 }
 
 model GRN {

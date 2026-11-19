@@ -174,6 +174,35 @@ export async function recordSupplierAdvance(params: {
 }
 
 /**
+ * Records money or a credit a supplier gives back to us — overpayment,
+ * returned/defective goods, a price adjustment. Not a cash advance in
+ * reverse on paper, but treated the same way in the ledger (spec section 6:
+ * "supplier credits") since this system has no separate payable balance per
+ * supplier invoice to credit against.
+ */
+export async function recordSupplierCredit(params: {
+  supplierId: string;
+  poId?: string;
+  currencyId: string;
+  amount: Decimal | number;
+  receivedAt: Date;
+  receivingAccountId: string;
+  reason: string;
+}) {
+  return prisma.supplierCredit.create({
+    data: {
+      supplierId: params.supplierId,
+      poId: params.poId,
+      currencyId: params.currencyId,
+      amount: new Decimal(params.amount),
+      receivedAt: params.receivedAt,
+      receivingAccountId: params.receivingAccountId,
+      reason: params.reason,
+    },
+  });
+}
+
+/**
  * Full reconciliation view for a PO: ordered vs. received vs. outstanding
  * per line, and how much of any advance payment is still unapplied (not
  * yet matched to a supplier invoice). Supports partial/multiple receipts
@@ -204,9 +233,11 @@ export async function getPurchaseOrderStatus(poId: string) {
 
   const advances = await prisma.supplierAdvance.findMany({ where: { poId } });
   const invoices = await prisma.supplierInvoice.findMany({ where: { poId } });
+  const credits = await prisma.supplierCredit.findMany({ where: { poId } });
   const totalAdvance = sumDecimal(advances.map((a) => a.amount));
   const totalMatchedAgainstInvoices = sumDecimal(invoices.map((i) => i.matchedAdvance));
-  const unappliedAdvance = totalAdvance.minus(totalMatchedAgainstInvoices);
+  const totalCredited = sumDecimal(credits.map((c) => c.amount));
+  const unappliedAdvance = totalAdvance.minus(totalMatchedAgainstInvoices).plus(totalCredited);
 
   return {
     poId: po.id,
@@ -214,6 +245,7 @@ export async function getPurchaseOrderStatus(poId: string) {
     lines,
     totalAdvance,
     totalMatchedAgainstInvoices,
+    totalCredited,
     unappliedAdvance,
   };
 }

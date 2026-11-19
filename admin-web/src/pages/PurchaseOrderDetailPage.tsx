@@ -59,6 +59,7 @@ interface POStatus {
   lines: POStatusLine[];
   totalAdvance: string;
   totalMatchedAgainstInvoices: string;
+  totalCredited: string;
   unappliedAdvance: string;
 }
 interface AmendmentEvent {
@@ -199,6 +200,10 @@ export function PurchaseOrderDetailPage() {
                 <td>{Number(status.data.totalMatchedAgainstInvoices).toLocaleString()}</td>
               </tr>
               <tr>
+                <td>Credits received from supplier</td>
+                <td>{Number(status.data.totalCredited).toLocaleString()}</td>
+              </tr>
+              <tr>
                 <td>
                   <strong>Unapplied advance</strong>
                 </td>
@@ -213,6 +218,7 @@ export function PurchaseOrderDetailPage() {
             above don't need to be re-entered below.
           </p>
           {has("finance.payment") && <SupplierPaymentForm poId={o.id} supplierId={o.supplier.id} currencyId={o.currencyId} onRecorded={reloadAll} />}
+          {has("finance.payment") && <SupplierCreditForm poId={o.id} supplierId={o.supplier.id} currencyId={o.currencyId} onRecorded={reloadAll} />}
         </div>
       )}
 
@@ -484,6 +490,93 @@ function SupplierPaymentForm({
       </div>
       <button type="submit" disabled={submitting || !paymentMethodAccountId}>
         {submitting ? "Recording..." : "Record payment"}
+      </button>
+    </form>
+  );
+}
+
+function SupplierCreditForm({
+  poId,
+  supplierId,
+  currencyId,
+  onRecorded,
+}: {
+  poId: string;
+  supplierId: string;
+  currencyId: string;
+  onRecorded: () => void;
+}) {
+  const accounts = useFetch<Account[]>("/settings/accounts");
+  const [amount, setAmount] = useState("");
+  const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [receivingAccountId, setReceivingAccountId] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSuccess(null);
+    setSubmitting(true);
+    try {
+      await api.post<{ id: string }>("/purchasing/credits", {
+        supplierId,
+        poId,
+        currencyId,
+        amount: Number(amount),
+        receivedAt: new Date(receivedAt).toISOString(),
+        receivingAccountId,
+        reason,
+      });
+      setSuccess("Credit recorded and posted — it's already linked to this PO, no need to re-enter it elsewhere.");
+      setAmount("");
+      setReason("");
+      onRecorded();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not record credit");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+      <h4 style={{ marginBottom: 6 }}>Record a supplier credit</h4>
+      <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 0 }}>
+        Money or a credit the supplier gives back — overpayment refund, returned/defective goods, a price adjustment. Reduces what we
+        still owe them, the same way an advance would.
+      </p>
+      {error && <div className="error-banner">{error}</div>}
+      {success && <div className="success-banner">{success}</div>}
+      <div className="form-row">
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Amount</label>
+          <input type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label>Receiving account</label>
+          <select value={receivingAccountId} onChange={(e) => setReceivingAccountId(e.target.value)} required>
+            <option value="">Select...</option>
+            {accounts.data?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.label} ({a.kind})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field" style={{ maxWidth: 160 }}>
+          <label>Date</label>
+          <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} required />
+        </div>
+        <div className="field" style={{ maxWidth: 240 }}>
+          <label>Reason</label>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} required />
+        </div>
+      </div>
+      <button type="submit" disabled={submitting || !receivingAccountId || !reason}>
+        {submitting ? "Recording..." : "Record credit"}
       </button>
     </form>
   );

@@ -210,6 +210,30 @@ export async function postSupplierAdvance(advanceId: string, actorUserId: string
   });
 }
 
+/**
+ * Dr the receiving account (money/credit comes back to us), Cr Supplier
+ * Advances — a credit reduces the same "what we're effectively owed back"
+ * balance a real advance increases, so it shows up correctly in
+ * getSupplierBalances' unappliedAdvance without a separate control account.
+ */
+export async function postSupplierCredit(creditId: string, actorUserId: string) {
+  const credit = await prisma.supplierCredit.findUniqueOrThrow({ where: { id: creditId } });
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+  assertPkr(credit.currencyId, pkr.id, "postSupplierCredit");
+
+  const supplierAdvances = await controlAccount("SUPPLIER_ADVANCES");
+
+  return postBalanced({
+    relatedDocumentType: "SupplierCredit",
+    relatedDocumentId: credit.id,
+    actorUserId,
+    entries: [
+      { accountId: credit.receivingAccountId, direction: "debit", amount: credit.amount, currencyId: pkr.id },
+      { accountId: supplierAdvances.id, direction: "credit", amount: credit.amount, currencyId: pkr.id },
+    ],
+  });
+}
+
 /** Dr the destination bank/cash account, Cr Accounts Receivable. */
 export async function postCustomerReceipt(receiptId: string, actorUserId: string) {
   const receipt = await prisma.paymentReceipt.findUniqueOrThrow({ where: { id: receiptId } });

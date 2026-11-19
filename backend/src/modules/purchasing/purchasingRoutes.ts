@@ -5,6 +5,7 @@ import {
   createPurchaseOrder,
   approvePurchaseOrder,
   recordSupplierAdvance,
+  recordSupplierCredit,
   getPurchaseOrderStatus,
   matchInvoiceToAdvance,
   updatePurchaseOrder,
@@ -15,7 +16,7 @@ import {
 import { createGRN } from "./grnService.js";
 import { reverseGrnLineReceipt } from "./grnCorrectionService.js";
 import { renderPurchaseOrderPdf } from "./poDocumentService.js";
-import { postSupplierAdvance } from "../finance/ledgerService.js";
+import { postSupplierAdvance, postSupplierCredit } from "../finance/ledgerService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
@@ -46,6 +47,16 @@ const advanceSchema = z.object({
   paidAt: z.coerce.date(),
   paymentMethodAccountId: z.string().min(1),
   reference: z.string().optional(),
+});
+
+const supplierCreditSchema = z.object({
+  supplierId: z.string().uuid(),
+  poId: z.string().uuid().optional(),
+  currencyId: z.string().uuid(),
+  amount: z.number().positive(),
+  receivedAt: z.coerce.date(),
+  receivingAccountId: z.string().uuid(),
+  reason: z.string().min(1),
 });
 
 const createGRNSchema = z.object({
@@ -258,6 +269,17 @@ export async function purchasingRoutes(app: FastifyInstance) {
       // dispatch gap fixed earlier this session, fixed the same way.
       await postSupplierAdvance(advance.id, request.authUser!.id);
       return reply.code(201).send(advance);
+    },
+  );
+
+  app.post(
+    "/purchasing/credits",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = supplierCreditSchema.parse(request.body);
+      const credit = await recordSupplierCredit(body);
+      await postSupplierCredit(credit.id, request.authUser!.id);
+      return reply.code(201).send(credit);
     },
   );
 
