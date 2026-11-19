@@ -11,3 +11,6 @@ coverage/
 backend/uploads/
 backups/
 admin-web/dev-dist/
+
+# Local-only tool config, not project code
+.codex/
