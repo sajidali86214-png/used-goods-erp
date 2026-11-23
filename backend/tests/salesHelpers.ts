@@ -38,11 +38,9 @@ export async function receiveSaleable(params: {
 export async function seedSalesReferenceData() {
   const base = await seedReferenceData();
 
-  const channel = await prisma.salesChannel.upsert({
-    where: { code: "local_market" },
-    update: {},
-    create: { code: "local_market", label: "Local market" },
-  });
+  const channel =
+    (await prisma.salesChannel.findFirst({ where: { code: "local_market" } })) ??
+    (await prisma.salesChannel.create({ data: { code: "local_market", label: "Local market" } }));
 
   const customer = await prisma.customer.create({
     data: { name: `Customer-${randomUUID()}` },

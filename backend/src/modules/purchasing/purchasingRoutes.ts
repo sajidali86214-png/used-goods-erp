@@ -17,6 +17,12 @@ import { createGRN } from "./grnService.js";
 import { reverseGrnLineReceipt } from "./grnCorrectionService.js";
 import { renderPurchaseOrderPdf } from "./poDocumentService.js";
 import { postSupplierAdvance, postSupplierCredit } from "../finance/ledgerService.js";
+import {
+  createSupplierInvoice,
+  approveSupplierInvoice,
+  disputeSupplierInvoice,
+  getUninvoicedGrnLines,
+} from "./supplierInvoiceService.js";
 import { prisma } from "../../lib/prisma.js";
 
 const createPOSchema = z.object({
@@ -105,6 +111,27 @@ const amendPOLineSchema = z.object({
 });
 
 const reverseGrnLineSchema = z.object({
+  reason: z.string().min(1),
+});
+
+const createInvoiceSchema = z.object({
+  supplierId: z.string().uuid(),
+  poId: z.string().uuid().optional(),
+  currencyId: z.string().uuid(),
+  invoiceDate: z.coerce.date(),
+  dueDate: z.coerce.date().optional(),
+  lines: z
+    .array(
+      z.object({
+        grnLineId: z.string().uuid(),
+        quantity: z.number().positive(),
+        unitPrice: z.number().nonnegative(),
+      }),
+    )
+    .min(1),
+});
+
+const disputeInvoiceSchema = z.object({
   reason: z.string().min(1),
 });
 
@@ -315,6 +342,83 @@ export async function purchasingRoutes(app: FastifyInstance) {
       } catch (err) {
         return reply.code(409).send({ error: err instanceof Error ? err.message : "could_not_reverse" });
       }
+    },
+  );
+
+  app.get(
+    "/purchasing/invoices",
+    { preHandler: requirePermission("finance.payment") },
+    async () =>
+      prisma.supplierInvoice.findMany({
+        include: { supplier: true, po: true, lines: true },
+        orderBy: { invoiceDate: "desc" },
+        take: 200,
+      }),
+  );
+
+  app.get(
+    "/purchasing/invoices/:id",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const invoice = await prisma.supplierInvoice.findUnique({
+        where: { id },
+        include: {
+          supplier: true,
+          po: true,
+          lines: { include: { grnLine: { include: { product: true, grade: true, poLine: true } } } },
+        },
+      });
+      if (!invoice) return reply.code(404).send({ error: "not_found" });
+      return invoice;
+    },
+  );
+
+  app.post(
+    "/purchasing/invoices",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const body = createInvoiceSchema.parse(request.body);
+      try {
+        const invoice = await createSupplierInvoice({ ...body, actorUserId: request.authUser!.id });
+        return reply.code(201).send(invoice);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_create_invoice" });
+      }
+    },
+  );
+
+  app.post(
+    "/purchasing/invoices/:id/approve",
+    { preHandler: requirePermission("invoice.approve") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      try {
+        const invoice = await approveSupplierInvoice(id, request.authUser!.id);
+        return reply.send(invoice);
+      } catch (err) {
+        return reply.code(409).send({ error: err instanceof Error ? err.message : "could_not_approve" });
+      }
+    },
+  );
+
+  app.post(
+    "/purchasing/invoices/:id/dispute",
+    { preHandler: requirePermission("finance.payment") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = disputeInvoiceSchema.parse(request.body);
+      const invoice = await disputeSupplierInvoice(id, body.reason, request.authUser!.id);
+      return reply.send(invoice);
+    },
+  );
+
+  app.get(
+    "/purchasing/orders/:id/uninvoiced-grn-lines",
+    { preHandler: requirePermission("finance.payment") },
+    async (request) => {
+      const { id } = request.params as { id: string };
+      return getUninvoicedGrnLines(id);
     },
   );
 }

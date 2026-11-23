@@ -80,7 +80,7 @@ describe("acceptance test #17: invalid and duplicate rows never produce a silent
 describe("opening-stock import (spec section 17 go-live cutover)", () => {
   it("creates a lot/cost-layer/saleable-state per row and never duplicates the same file", async () => {
     const { product, currency, bin } = await seedReferenceData();
-    const grade = await prisma.grade.upsert({ where: { code: "A" }, update: {}, create: { code: "A", label: "Grade A" } });
+    const grade = (await prisma.grade.findFirst({ where: { code: "A" } }))!;
     const fileRef = `opening-stock-${randomUUID()}.csv`;
 
     const job = await commitOpeningStockImport({

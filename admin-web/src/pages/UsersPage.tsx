@@ -1,11 +1,18 @@
 import { useState, type FormEvent } from "react";
 import { useFetch } from "../api/useFetch";
 import { api, ApiError } from "../api/client";
+import { useAuth } from "../auth/AuthContext";
 
 interface Role {
   id: string;
   code: string;
   label: string;
+}
+interface Branch {
+  id: string;
+  name: string;
+  code: string;
+  isActive: boolean;
 }
 interface UserRow {
   id: string;
@@ -13,18 +20,25 @@ interface UserRow {
   email: string;
   isActive: boolean;
   lastLoginAt: string | null;
+  branchId: string;
   roles: { role: Role }[];
 }
 
 export function UsersPage() {
+  const { has } = useAuth();
   const users = useFetch<UserRow[]>("/users");
   const roles = useFetch<Role[]>("/roles");
+  // Only fetched/shown for an owner — an ordinary manager's new hire always
+  // joins the manager's own branch, with no picker to second-guess that.
+  const canPickBranch = has("branch.manage");
+  const branches = useFetch<Branch[]>(canPickBranch ? "/branches" : null);
 
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [roleIds, setRoleIds] = useState<string[]>([]);
+  const [branchId, setBranchId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -37,11 +51,12 @@ export function UsersPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await api.post("/users", { name, email, password, roleIds });
+      await api.post("/users", { name, email, password, roleIds, branchId: canPickBranch && branchId ? branchId : undefined });
       setName("");
       setEmail("");
       setPassword("");
       setRoleIds([]);
+      setBranchId("");
       setShowForm(false);
       users.reload();
     } catch (err) {
@@ -57,6 +72,17 @@ export function UsersPage() {
       users.reload();
     } catch {
       // surfaced via reload failing silently; acceptable for this action
+    }
+  }
+
+  // A deliberate, separate action (not an inline table edit) — moving a user
+  // changes how their historical rows are attributed going forward.
+  async function handleMoveBranch(userId: string, newBranchId: string) {
+    try {
+      await api.patch(`/users/${userId}/branch`, { branchId: newBranchId });
+      users.reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not move user");
     }
   }
 
@@ -85,6 +111,19 @@ export function UsersPage() {
             <label>Temporary password (at least 8 characters)</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={8} />
           </div>
+          {canPickBranch && (
+            <div className="field">
+              <label>Branch (leave blank for your own)</label>
+              <select value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+                <option value="">Your own branch</option>
+                {branches.data?.filter((b) => b.isActive).map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label>Roles</label>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -110,6 +149,7 @@ export function UsersPage() {
                 <th>Name</th>
                 <th>Email</th>
                 <th>Roles</th>
+                {canPickBranch && <th>Branch</th>}
                 <th>Status</th>
                 <th></th>
               </tr>
@@ -120,6 +160,17 @@ export function UsersPage() {
                   <td>{u.name}</td>
                   <td>{u.email}</td>
                   <td>{u.roles.map((r) => r.role.code).join(", ")}</td>
+                  {canPickBranch && (
+                    <td>
+                      <select value={u.branchId} onChange={(e) => handleMoveBranch(u.id, e.target.value)}>
+                        {branches.data?.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                  )}
                   <td>
                     <span className="badge">{u.isActive ? "active" : "deactivated"}</span>
                   </td>

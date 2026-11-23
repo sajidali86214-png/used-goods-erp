@@ -16,6 +16,7 @@ import { masterDataRoutes } from "./modules/masterdata/masterDataRoutes.js";
 import { usersRoutes } from "./modules/users/usersRoutes.js";
 import { auditRoutes } from "./modules/audit/auditRoutes.js";
 import { investorRoutes } from "./modules/investors/investorRoutes.js";
+import { branchRoutes } from "./modules/branches/branchRoutes.js";
 import { mediaRoutes, UPLOADS_DIR } from "./modules/media/mediaRoutes.js";
 import { isRemoteStorage, registerLocalFileRoute } from "./modules/media/storage.js";
 
@@ -51,6 +52,7 @@ export async function buildServer() {
   await app.register(usersRoutes);
   await app.register(auditRoutes);
   await app.register(investorRoutes);
+  await app.register(branchRoutes);
 
   app.get("/health", async () => ({ status: "ok" }));
 

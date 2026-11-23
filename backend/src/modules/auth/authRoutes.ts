@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import argon2 from "argon2";
 import { z } from "zod";
-import { prisma } from "../../lib/prisma.js";
+import { prisma, rawPrisma } from "../../lib/prisma.js";
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -12,8 +12,11 @@ export async function authRoutes(app: FastifyInstance) {
   app.post("/auth/login", async (request, reply) => {
     const body = loginSchema.parse(request.body);
 
-    const user = await prisma.user.findUnique({ where: { email: body.email } });
-    if (!user || !user.isActive) {
+    // rawPrisma, not the branch-scoped client: no branch context exists yet
+    // at login — the user's own branchId is what establishes it, via the
+    // JWT this issues and auth.ts's per-request lookup thereafter.
+    const user = await rawPrisma.user.findUnique({ where: { email: body.email }, include: { branch: true } });
+    if (!user || !user.isActive || !user.branch.isActive) {
       return reply.code(401).send({ error: "invalid_credentials" });
     }
 
@@ -22,9 +25,9 @@ export async function authRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "invalid_credentials" });
     }
 
-    await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await rawPrisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
 
-    const token = app.jwt.sign({ sub: user.id }, { expiresIn: "12h" });
+    const token = app.jwt.sign({ sub: user.id, branchId: user.branchId }, { expiresIn: "12h" });
     return reply.send({ token });
   });
 

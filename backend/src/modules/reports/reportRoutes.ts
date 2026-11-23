@@ -20,6 +20,11 @@ import {
   getStockLevelsByProduct,
   getProductStockDetail,
 } from "./reportService.js";
+import {
+  getConsolidatedInventoryValuation,
+  getConsolidatedFinancialSummary,
+  getConsolidatedSupplierBalances,
+} from "./consolidatedReportService.js";
 
 export async function reportRoutes(app: FastifyInstance) {
   // Operational dashboard — broadly available to operational roles.
@@ -88,7 +93,15 @@ export async function reportRoutes(app: FastifyInstance) {
   app.get(
     "/reports/inventory-valuation",
     { preHandler: requirePermission("cost.view") },
-    async () => getInventoryValuation(),
+    async (request, reply) => {
+      if ((request.query as { consolidated?: string }).consolidated === "true") {
+        if (!request.authUser!.permissions.has("reports.consolidated.view")) {
+          return reply.code(403).send({ error: "forbidden", required: "reports.consolidated.view" });
+        }
+        return getConsolidatedInventoryValuation();
+      }
+      return getInventoryValuation();
+    },
   );
   app.get(
     "/reports/inventory-by-category",
@@ -98,18 +111,30 @@ export async function reportRoutes(app: FastifyInstance) {
   app.get(
     "/reports/financial-summary",
     { preHandler: requirePermission("profit.view") },
-    async (request) => {
-      const { from, to } = request.query as { from?: string; to?: string };
-      return getFinancialSummary({
-        from: from ? new Date(from) : undefined,
-        to: to ? new Date(to) : undefined,
-      });
+    async (request, reply) => {
+      const { from, to, consolidated } = request.query as { from?: string; to?: string; consolidated?: string };
+      const params = { from: from ? new Date(from) : undefined, to: to ? new Date(to) : undefined };
+      if (consolidated === "true") {
+        if (!request.authUser!.permissions.has("reports.consolidated.view")) {
+          return reply.code(403).send({ error: "forbidden", required: "reports.consolidated.view" });
+        }
+        return getConsolidatedFinancialSummary(params);
+      }
+      return getFinancialSummary(params);
     },
   );
   app.get(
     "/reports/supplier-balances",
     { preHandler: requirePermission("supplier.payment_details.view") },
-    async () => getSupplierBalances(),
+    async (request, reply) => {
+      if ((request.query as { consolidated?: string }).consolidated === "true") {
+        if (!request.authUser!.permissions.has("reports.consolidated.view")) {
+          return reply.code(403).send({ error: "forbidden", required: "reports.consolidated.view" });
+        }
+        return getConsolidatedSupplierBalances();
+      }
+      return getSupplierBalances();
+    },
   );
   app.get(
     "/reports/suppliers/:id/statement",

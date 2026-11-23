@@ -1,5 +1,5 @@
 import argon2 from "argon2";
-import { prisma } from "../src/lib/prisma.js";
+import { rawPrisma as prisma } from "../src/lib/prisma.js";
 import { PERMISSIONS, ROLE_PERMISSIONS } from "../src/lib/permissions.js";
 
 async function main() {
@@ -46,18 +46,12 @@ async function main() {
     AC: "Mixed Grade A/C",
   };
   for (const code of ["A", "B", "C", "UNGRADED", "AB", "ABC", "BC", "AC"]) {
-    await prisma.grade.upsert({
-      where: { code },
-      update: {},
-      create: { code, label: gradeLabels[code] ?? `Grade ${code}` },
-    });
+    const existingGrade = await prisma.grade.findFirst({ where: { code } });
+    if (!existingGrade) await prisma.grade.create({ data: { code, label: gradeLabels[code] ?? `Grade ${code}` } });
   }
 
-  await prisma.bin.upsert({
-    where: { code: "MAIN" },
-    update: {},
-    create: { code: "MAIN", label: "Main warehouse" },
-  });
+  const existingMainBin = await prisma.bin.findFirst({ where: { code: "MAIN" } });
+  if (!existingMainBin) await prisma.bin.create({ data: { code: "MAIN", label: "Main warehouse" } });
 
   // Starter categories for a used clothing & bags business — the owner can
   // add more via Settings > Categories.
@@ -74,7 +68,8 @@ async function main() {
     "Shoes",
     "Accessories",
   ]) {
-    await prisma.category.upsert({ where: { name }, update: {}, create: { name } });
+    const existingCategory = await prisma.category.findFirst({ where: { name } });
+    if (!existingCategory) await prisma.category.create({ data: { name } });
   }
 
   const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
@@ -85,6 +80,7 @@ async function main() {
   const controlAccounts: { code: string; label: string; nature: string }[] = [
     { code: "ACCOUNTS_RECEIVABLE", label: "Accounts Receivable", nature: "asset" },
     { code: "ACCOUNTS_PAYABLE", label: "Accounts Payable", nature: "liability" },
+    { code: "GRNI", label: "Goods Received Not Invoiced", nature: "liability" },
     { code: "SUPPLIER_ADVANCES", label: "Supplier Advances", nature: "asset" },
     { code: "INVENTORY", label: "Inventory", nature: "asset" },
     { code: "COGS", label: "Cost of Goods Sold", nature: "expense" },
@@ -95,11 +91,12 @@ async function main() {
     { code: "OPERATING_EXPENSES", label: "Operating Expenses", nature: "expense" },
   ];
   for (const account of controlAccounts) {
-    await prisma.account.upsert({
-      where: { code: account.code },
-      update: {},
-      create: { code: account.code, label: account.label, nature: account.nature, currencyId: pkr.id, kind: "control" },
-    });
+    const existingAccount = await prisma.account.findFirst({ where: { code: account.code } });
+    if (!existingAccount) {
+      await prisma.account.create({
+        data: { code: account.code, label: account.label, nature: account.nature, currencyId: pkr.id, kind: "control" },
+      });
+    }
   }
 
   const ownerRole = await prisma.role.findUniqueOrThrow({ where: { code: "owner" } });

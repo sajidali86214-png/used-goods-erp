@@ -6,7 +6,7 @@ export async function generateOrderNumber(): Promise<string> {
   return generateSequentialNumber({
     prefix: "SO",
     countExisting: () => prisma.salesOrder.count(),
-    exists: async (candidate) => !!(await prisma.salesOrder.findUnique({ where: { orderNumber: candidate } })),
+    exists: async (candidate) => !!(await prisma.salesOrder.findFirst({ where: { orderNumber: candidate } })),
   });
 }
 

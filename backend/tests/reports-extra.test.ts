@@ -5,7 +5,11 @@ import { receiveSaleable, seedSalesReferenceData } from "./salesHelpers.js";
 import { createDraftOrder } from "../src/modules/sales/salesOrderService.js";
 import { recordCustomerReceipt } from "../src/modules/finance/paymentService.js";
 import { lockExchangeRate } from "../src/modules/finance/currencyService.js";
-import { getStockAging, getSupplierBalances, getCustomerBalances } from "../src/modules/reports/reportService.js";
+import { getStockAging, getSupplierBalances, getCustomerBalances, getSupplierStatement } from "../src/modules/reports/reportService.js";
+import { createPurchaseOrder, approvePurchaseOrder } from "../src/modules/purchasing/purchaseOrderService.js";
+import { createGRN } from "../src/modules/purchasing/grnService.js";
+import { createSupplierInvoice, approveSupplierInvoice } from "../src/modules/purchasing/supplierInvoiceService.js";
+import { seedReferenceData } from "./helpers.js";
 
 afterAll(async () => {
   await prisma.$disconnect();
@@ -35,6 +39,56 @@ describe("extra reports: stock aging, supplier balances, customer balances", () 
     expect(line).toBeDefined();
     expect(line!.totalAdvancesPaid.toNumber()).toBe(4000);
     expect(line!.unappliedAdvance.toNumber()).toBe(4000);
+  });
+
+  it("getSupplierBalances and getSupplierStatement surface AP from an approved supplier invoice", async () => {
+    const { currency, product, user } = await seedReferenceData();
+    const supplier = await prisma.supplier.create({
+      data: { name: `AP-Supplier-${randomUUID()}`, defaultCurrencyId: currency.id },
+    });
+
+    const po = await createPurchaseOrder({
+      supplierId: supplier.id,
+      currencyId: currency.id,
+      lines: [{ productId: product.id, orderedQty: 4, unitPrice: 150 }],
+    });
+    await approvePurchaseOrder(po.id);
+    const grn = await createGRN({
+      supplierId: supplier.id,
+      receiptDate: new Date(),
+      receivingUserId: user.id,
+      lines: [{ poLineId: po.lines[0]!.id, productId: product.id, receivedQty: 4 }],
+    });
+
+    const overdueDueDate = new Date(Date.now() - 24 * 60 * 60 * 1000); // yesterday — already overdue
+    const invoice = await createSupplierInvoice({
+      supplierId: supplier.id,
+      poId: po.id,
+      currencyId: currency.id,
+      invoiceDate: new Date(),
+      dueDate: overdueDueDate,
+      lines: [{ grnLineId: grn.lines[0]!.id, quantity: 4, unitPrice: 150 }],
+      actorUserId: user.id,
+    });
+
+    // Not yet approved — AP is still zero, but this GRN line is uninvoiced-count-wise already covered.
+    const balancesBeforeApproval = await getSupplierBalances();
+    const lineBeforeApproval = balancesBeforeApproval.find((b) => b.supplierId === supplier.id);
+    expect(lineBeforeApproval?.invoicedUnpaid.toNumber() ?? 0).toBe(0);
+
+    await approveSupplierInvoice(invoice.id, user.id);
+
+    const balances = await getSupplierBalances();
+    const line = balances.find((b) => b.supplierId === supplier.id);
+    expect(line).toBeDefined();
+    expect(line!.invoicedUnpaid.toNumber()).toBe(600); // 4 * 150, Phase 1 has no payment recording yet
+    expect(line!.overdueAmount.toNumber()).toBe(600); // dueDate already passed
+    expect(line!.uninvoicedCount).toBe(0); // the only GRN line was invoiced
+
+    const statement = await getSupplierStatement(supplier.id);
+    const approvalEvent = statement.lines.find((l) => l.type === "invoice_approved");
+    expect(approvalEvent).toBeDefined();
+    expect(approvalEvent!.amount.toNumber()).toBe(0); // informational only — no payment path yet
   });
 
   it("getCustomerBalances reflects booked value minus actual receipts", async () => {

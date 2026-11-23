@@ -15,11 +15,14 @@ import { FinancePage } from "./pages/FinancePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { ImportsPage } from "./pages/ImportsPage";
 import { UsersPage } from "./pages/UsersPage";
+import { BranchesPage } from "./pages/BranchesPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { InvestorDashboardPage } from "./pages/InvestorDashboardPage";
 import { PurchaseOrderDetailPage } from "./pages/PurchaseOrderDetailPage";
 import { GRNDetailPage } from "./pages/GRNDetailPage";
+import { SupplierInvoicesPage } from "./pages/SupplierInvoicesPage";
+import { SupplierInvoiceDetailPage } from "./pages/SupplierInvoiceDetailPage";
 
 export default function App() {
   return (
@@ -35,6 +38,8 @@ export default function App() {
             <Route path="purchasing" element={<PurchasingPage />} />
             <Route path="purchasing/:id" element={<PurchaseOrderDetailPage />} />
             <Route path="grns/:id" element={<GRNDetailPage />} />
+            <Route path="purchasing/invoices" element={<SupplierInvoicesPage />} />
+            <Route path="purchasing/invoices/:id" element={<SupplierInvoiceDetailPage />} />
             <Route path="sales" element={<SalesOrdersPage />} />
             <Route path="sales/:id" element={<SalesOrderDetailPage />} />
             <Route path="customers/:id" element={<CustomerDetailPage />} />
@@ -43,6 +48,7 @@ export default function App() {
             <Route path="reports" element={<ReportsPage />} />
             <Route path="imports" element={<ImportsPage />} />
             <Route path="users" element={<UsersPage />} />
+            <Route path="branches" element={<BranchesPage />} />
             <Route path="audit" element={<AuditLogPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="investor" element={<InvestorDashboardPage />} />

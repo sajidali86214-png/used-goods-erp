@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { runSerializable } from "../../lib/transaction.js";
 import { Decimal, sumDecimal, assertEqual, assertNonNegative } from "../../lib/money.js";
+import { controlAccount, postBalancedWithin, pkrCurrency } from "../finance/ledgerService.js";
 
 interface ReceiveToInspectionInput {
   grnLineId?: string; // omit for opening-stock lots with no GRN (spec section 3.2)
@@ -34,7 +35,7 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
   return runSerializable(async (tx) => {
     const receiptGrade = input.gradeId
       ? await tx.grade.findUniqueOrThrow({ where: { id: input.gradeId } })
-      : await tx.grade.findUniqueOrThrow({ where: { code: "UNGRADED" } });
+      : await tx.grade.findFirstOrThrow({ where: { code: "UNGRADED" } });
     const destinationState = input.gradeId ? "saleable" : "inspection";
 
     const qty = new Decimal(input.quantity);
@@ -76,6 +77,28 @@ export async function receiveToInspection(input: ReceiveToInspectionInput) {
         unitCost: landedUnitCost,
       },
     });
+
+    // GRNI (Goods Received Not Invoiced): receiving stock against a real GRN
+    // line recognizes the inventory asset immediately — Dr Inventory / Cr
+    // GRNI, a clearing liability that becomes real Accounts Payable once the
+    // matching supplier invoice is approved (ledgerService.ts's
+    // postSupplierInvoiceApproval). Opening-stock receipts (no grnLineId)
+    // skip this — there's no supplier invoice to eventually clear it against.
+    if (input.grnLineId) {
+      const pkr = await pkrCurrency(tx);
+      const inventory = await controlAccount(tx, "INVENTORY");
+      const grni = await controlAccount(tx, "GRNI");
+      const totalCost = landedUnitCost.times(qty);
+      await postBalancedWithin(tx, {
+        relatedDocumentType: "GRNLine",
+        relatedDocumentId: input.grnLineId,
+        actorUserId: input.actorUserId,
+        entries: [
+          { accountId: inventory.id, direction: "debit", amount: totalCost, currencyId: pkr.id },
+          { accountId: grni.id, direction: "credit", amount: totalCost, currencyId: pkr.id },
+        ],
+      });
+    }
 
     await tx.stockMovement.create({
       data: {

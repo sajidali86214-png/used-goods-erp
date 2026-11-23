@@ -14,3 +14,6 @@ admin-web/dev-dist/
 
 # Local-only tool config, not project code
 .codex/
+
+# Playwright MCP scratch output (screenshots/snapshots from manual UI checks)
+.playwright-mcp/

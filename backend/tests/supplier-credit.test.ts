@@ -40,7 +40,7 @@ describe("supplier credits: money or stock credit a supplier gives back", () => 
     await postSupplierCredit(credit.id, user.id);
 
     expect((await getAccountBalance(receivingAccount.id)).toNumber()).toBe(balanceBefore.toNumber() + 1500);
-    const supplierAdvancesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
+    const supplierAdvancesAccount = await prisma.account.findFirstOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
     const creditEntries = await prisma.ledgerEntry.findMany({ where: { relatedDocumentType: "SupplierCredit", relatedDocumentId: credit.id } });
     expect(creditEntries).toHaveLength(2);
     expect(creditEntries.find((e) => e.accountId === supplierAdvancesAccount.id)?.direction).toBe("credit");

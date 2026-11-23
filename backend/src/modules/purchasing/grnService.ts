@@ -15,7 +15,7 @@ export async function generateGrnNumber(): Promise<string> {
   return generateSequentialNumber({
     prefix: "GRN",
     countExisting: () => prisma.gRN.count(),
-    exists: async (candidate) => !!(await prisma.gRN.findUnique({ where: { grnNumber: candidate } })),
+    exists: async (candidate) => !!(await prisma.gRN.findFirst({ where: { grnNumber: candidate } })),
   });
 }
 

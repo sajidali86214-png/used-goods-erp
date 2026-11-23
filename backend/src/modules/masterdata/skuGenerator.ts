@@ -18,7 +18,7 @@ export async function generateSkuCode(categoryId: string): Promise<string> {
   // rather than letting the DB's unique constraint bubble up as a 500.
   for (let attempt = 0; attempt < 5; attempt++) {
     const candidate = `${prefix}-${String(seq).padStart(4, "0")}`;
-    const taken = await prisma.product.findUnique({ where: { skuCode: candidate } });
+    const taken = await prisma.product.findFirst({ where: { skuCode: candidate } });
     if (!taken) return candidate;
     seq += 1;
   }

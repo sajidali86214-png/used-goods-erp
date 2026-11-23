@@ -35,6 +35,9 @@ A user may hold multiple roles; effective permission = union across roles. Owner
 | `user.manage` | Create/deactivate users, assign roles |
 | `settings.manage` | Edit master/reference data (categories, grades, channels, etc.) |
 | `audit.view` | Read audit log |
+| `branch.manage` | Create/deactivate branches, assign/move a user's branch |
+| `reports.consolidated.view` | View all-branches-combined reports, not just the viewer's own branch |
+| `invoice.approve` | Approve a supplier invoice (posts Dr GRNI / Cr Accounts Payable) — distinct from `finance.payment`, which only records/enters things |
 
 ## Role → permission defaults
 
@@ -57,6 +60,7 @@ A user may hold multiple roles; effective permission = union across roles. Owner
 | refund.create | ✓ | ✓ | | | ✓ | ✓ | |
 | refund.approve | ✓ | ✓ (within threshold) | | | | | |
 | finance.payment | ✓ | ✓ | | | | ✓ | |
+| invoice.approve | ✓ | ✓ | | | | ✓ | |
 | finance.expense | ✓ | ✓ | | | | ✓ | |
 | finance.reconcile | ✓ | | | | | ✓ | |
 | finance.report.view | ✓ | ✓ | | | | ✓ | view-only if granted |

@@ -25,11 +25,9 @@ describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR con
       create: { code: "PKR", symbol: "Rs" },
     });
 
-    const fleek = await prisma.salesChannel.upsert({
-      where: { code: "fleek" },
-      update: {},
-      create: { code: "fleek", label: "Fleek", defaultCommissionPct: 0 },
-    });
+    const fleek =
+      (await prisma.salesChannel.findFirst({ where: { code: "fleek" } })) ??
+      (await prisma.salesChannel.create({ data: { code: "fleek", label: "Fleek", defaultCommissionPct: 0 } }));
     expect(fleek.defaultCommissionPct?.toNumber() ?? 0).toBe(0);
 
     const gbpAccount = await prisma.account.create({

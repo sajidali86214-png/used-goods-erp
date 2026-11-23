@@ -1,5 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { runSerializable } from "../../lib/transaction.js";
+import { postBalancedWithin } from "../finance/ledgerService.js";
 
 /**
  * Reverses a GRN line's entire stock and cost-layer impact so a receiving
@@ -38,6 +39,28 @@ export async function reverseGrnLineReceipt(params: { grnLineId: string; reason:
           `Cannot reverse this line: some of this stock has already been dispatched (sold). Use the Returns flow to correct it instead.`,
         );
       }
+    }
+
+    // Counter-post the receipt-time GRNI entries (Dr Inventory / Cr GRNI), if
+    // any were posted for this line — a line received before this feature
+    // existed, or one that never carried a supplier invoice concept, has
+    // none, in which case there's simply nothing to reverse financially.
+    const originalEntries = await tx.ledgerEntry.findMany({
+      where: { relatedDocumentType: "GRNLine", relatedDocumentId: grnLine.id },
+    });
+    if (originalEntries.length > 0) {
+      await postBalancedWithin(tx, {
+        relatedDocumentType: "GRNLine",
+        relatedDocumentId: `${grnLine.id}-reversal`,
+        actorUserId: params.actorUserId,
+        entries: originalEntries.map((entry) => ({
+          accountId: entry.accountId,
+          direction: entry.direction === "debit" ? "credit" : "debit",
+          amount: entry.amount,
+          currencyId: entry.currencyId,
+          reversalOfId: entry.id,
+        })),
+      });
     }
 
     for (const costLayer of allCostLayers) {

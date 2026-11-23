@@ -53,7 +53,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
 
     expect(bankBalanceAfter.toNumber()).toBe(bankBalanceBefore.toNumber() - 15000);
 
-    const opex = await prisma.account.findUniqueOrThrow({ where: { code: "OPERATING_EXPENSES" } });
+    const opex = await prisma.account.findFirstOrThrow({ where: { code: "OPERATING_EXPENSES" } });
     const opexEntries = await prisma.ledgerEntry.findMany({
       where: { relatedDocumentType: "Expense", relatedDocumentId: expense.id },
     });
@@ -81,15 +81,13 @@ describe("finance ledger: every posting is balanced and account balances reflect
     const balanceBeforeAdvance = await getAccountBalance(bank.id);
     await postSupplierAdvance(advance.id, ledgerTestUser.id);
     expect((await getAccountBalance(bank.id)).toNumber()).toBe(balanceBeforeAdvance.toNumber() - 5000);
-    const supplierAdvancesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
+    const supplierAdvancesAccount = await prisma.account.findFirstOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
     expect((await getAccountBalance(supplierAdvancesAccount.id)).toNumber()).toBeGreaterThanOrEqual(5000);
 
     const customer = await prisma.customer.create({ data: { name: `Customer-${randomUUID()}` } });
-    const channel = await prisma.salesChannel.upsert({
-      where: { code: "local_market" },
-      update: {},
-      create: { code: "local_market", label: "Local market" },
-    });
+    const channel =
+      (await prisma.salesChannel.findFirst({ where: { code: "local_market" } })) ??
+      (await prisma.salesChannel.create({ data: { code: "local_market", label: "Local market" } }));
     const category = await prisma.category.create({ data: { name: `Cat-${randomUUID()}` } });
     const product = await prisma.product.create({ data: { skuCode: `SKU-${randomUUID()}`, name: "P", categoryId: category.id } });
     const order = await createDraftOrder({
@@ -152,8 +150,8 @@ describe("finance ledger: every posting is balanced and account balances reflect
       pickIds.push(pick.id);
     }
 
-    const salesRevenue = await prisma.account.findUniqueOrThrow({ where: { code: "SALES_REVENUE" } });
-    const cogsAccount = await prisma.account.findUniqueOrThrow({ where: { code: "COGS" } });
+    const salesRevenue = await prisma.account.findFirstOrThrow({ where: { code: "SALES_REVENUE" } });
+    const cogsAccount = await prisma.account.findFirstOrThrow({ where: { code: "COGS" } });
     const revenueBefore = await getAccountBalance(salesRevenue.id);
     const cogsBefore = await getAccountBalance(cogsAccount.id);
 
@@ -198,7 +196,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
     expect((await getAccountBalance(bankA.id)).toNumber()).toBe(aBefore.toNumber() - 2000);
     expect((await getAccountBalance(bankB.id)).toNumber()).toBe(bBefore.toNumber() + 2000);
 
-    const ownersEquity = await prisma.account.findUniqueOrThrow({ where: { code: "OWNERS_EQUITY" } });
+    const ownersEquity = await prisma.account.findFirstOrThrow({ where: { code: "OWNERS_EQUITY" } });
     const equityBefore = await getAccountBalance(ownersEquity.id);
     const contribution = await prisma.ownerTransaction.create({
       data: { accountId: bankA.id, amount: 10000, type: "contribution" },
@@ -208,7 +206,7 @@ describe("finance ledger: every posting is balanced and account balances reflect
     expect((await getAccountBalance(bankA.id)).toNumber()).toBe(bankABefore.toNumber() + 10000);
     expect((await getAccountBalance(ownersEquity.id)).toNumber()).toBe(equityBefore.toNumber() + 10000);
 
-    const salesRevenue = await prisma.account.findUniqueOrThrow({ where: { code: "SALES_REVENUE" } });
+    const salesRevenue = await prisma.account.findFirstOrThrow({ where: { code: "SALES_REVENUE" } });
     const revenueEntriesForTransfer = await prisma.ledgerEntry.findMany({
       where: { accountId: salesRevenue.id, relatedDocumentType: { in: ["Transfer", "OwnerTransaction"] } },
     });

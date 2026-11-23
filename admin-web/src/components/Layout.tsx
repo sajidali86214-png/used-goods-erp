@@ -8,12 +8,14 @@ const NAV_ITEMS: { to: string; label: string; permission?: string }[] = [
   { to: "/inventory", label: "Inventory", permission: "stock.count" },
   { to: "/suppliers", label: "Suppliers" },
   { to: "/purchasing", label: "Purchasing", permission: "stock.receive" },
+  { to: "/purchasing/invoices", label: "Supplier Invoices", permission: "finance.payment" },
   { to: "/sales", label: "Sales Orders", permission: "order.create" },
   { to: "/returns", label: "Returns & Refunds", permission: "return.process" },
   { to: "/finance", label: "Finance", permission: "finance.payment" },
   { to: "/reports", label: "Reports", permission: "profit.view" },
   { to: "/imports", label: "Bulk Import", permission: "settings.manage" },
   { to: "/users", label: "Users", permission: "user.manage" },
+  { to: "/branches", label: "Branches", permission: "branch.manage" },
   { to: "/audit", label: "Audit Log", permission: "audit.view" },
   { to: "/settings", label: "Settings", permission: "settings.manage" },
   { to: "/investor", label: "Investor Dashboard", permission: "investor.dashboard.view" },
@@ -38,7 +40,13 @@ export function Layout() {
   const visibleItems = isInvestorOnly
     ? NAV_ITEMS.filter((item) => item.to === "/investor")
     : NAV_ITEMS.filter((item) => !item.permission || has(item.permission));
-  const currentTitle = visibleItems.find((item) => (item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)))?.label ?? "Used Goods ERP";
+  // Longest-prefix match (not array order) so a nested route like
+  // /purchasing/invoices picks its own nav label instead of its parent's.
+  const matchingNavItems = visibleItems.filter((item) =>
+    item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to),
+  );
+  const currentTitle =
+    matchingNavItems.sort((a, b) => b.to.length - a.to.length)[0]?.label ?? "Used Goods ERP";
 
   // Belt-and-braces: even a direct URL (not just the hidden nav links) sends
   // an investor-only login back to their own dashboard.

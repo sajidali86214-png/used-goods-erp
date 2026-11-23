@@ -418,6 +418,21 @@ export async function getSupplierBalances() {
     const totalCredited = sumDecimal(credits.map((c) => c.amount));
     const unappliedAdvance = totalAdvancesPaid.minus(totalMatched).plus(totalCredited);
 
+    // AP visibility (Phase 1): Phase 1 has no payment-recording path yet, so
+    // an approved invoice's full amount is still outstanding — this isn't a
+    // simplification, it's just what "approved" currently means.
+    const approvedInvoices = invoices.filter((i) => i.approvalStatus === "approved");
+    const invoicedUnpaid = sumDecimal(approvedInvoices.map((i) => i.amount));
+    const now = new Date();
+    const overdueAmount = sumDecimal(
+      approvedInvoices.filter((i) => !i.isDisputed && i.dueDate && i.dueDate < now).map((i) => i.amount),
+    );
+    const grnLinesForSupplier = await prisma.gRNLine.findMany({
+      where: { grn: { supplierId: supplier.id } },
+      include: { invoiceLines: true },
+    });
+    const uninvoicedCount = grnLinesForSupplier.filter((g) => g.invoiceLines.length === 0).length;
+
     const openPos = await prisma.purchaseOrder.findMany({
       where: { supplierId: supplier.id, status: { in: ["draft", "approved"] } },
       include: { lines: true },
@@ -433,8 +448,23 @@ export async function getSupplierBalances() {
       if (hasOutstanding) openPoCount += 1;
     }
 
-    if (totalAdvancesPaid.greaterThan(0) || totalCredited.greaterThan(0) || openPoCount > 0) {
-      results.push({ supplierId: supplier.id, supplierName: supplier.name, totalAdvancesPaid, unappliedAdvance, openPoCount });
+    if (
+      totalAdvancesPaid.greaterThan(0) ||
+      totalCredited.greaterThan(0) ||
+      openPoCount > 0 ||
+      invoicedUnpaid.greaterThan(0) ||
+      uninvoicedCount > 0
+    ) {
+      results.push({
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        totalAdvancesPaid,
+        unappliedAdvance,
+        openPoCount,
+        invoicedUnpaid,
+        uninvoicedCount,
+        overdueAmount,
+      });
     }
   }
 
@@ -456,6 +486,10 @@ export async function getSupplierStatement(supplierId: string) {
   const advances = await prisma.supplierAdvance.findMany({ where: { supplierId }, include: { po: true } });
   const invoices = await prisma.supplierInvoice.findMany({ where: { supplierId, matchedAdvance: { gt: 0 } }, include: { po: true } });
   const credits = await prisma.supplierCredit.findMany({ where: { supplierId }, include: { po: true } });
+  const approvedInvoices = await prisma.supplierInvoice.findMany({
+    where: { supplierId, approvalStatus: "approved" },
+    include: { po: true },
+  });
 
   const events = [
     ...advances.map((a) => ({
@@ -475,6 +509,15 @@ export async function getSupplierStatement(supplierId: string) {
       type: "credit_received" as const,
       description: `Credit received${c.po ? ` against ${c.po.poNumber}` : ""} — ${c.reason}`,
       amount: c.amount,
+    })),
+    // Phase 1 has no payment-recording path yet, so this doesn't move the
+    // unapplied-advance balance — it's informational, logged at zero amount
+    // so it shows up in the chronology without perturbing the running total.
+    ...approvedInvoices.map((i) => ({
+      date: i.approvedAt ?? i.invoiceDate,
+      type: "invoice_approved" as const,
+      description: `Invoice${i.po ? ` for ${i.po.poNumber}` : ""} approved — ${i.amount.toString()} now payable`,
+      amount: new Decimal(0),
     })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
 
@@ -590,7 +633,7 @@ export async function getCustomerStatement(customerId: string) {
 }
 
 async function sumEntriesForAccountCode(code: string, params: { from?: Date; to?: Date }) {
-  const account = await prisma.account.findUniqueOrThrow({ where: { code } });
+  const account = await prisma.account.findFirstOrThrow({ where: { code } });
   const entries = await prisma.ledgerEntry.findMany({
     where: {
       accountId: account.id,
@@ -609,7 +652,7 @@ async function sumEntriesForAccountCode(code: string, params: { from?: Date; to?
  * rule as getFinancialSummary, so draft/unposted expenses never show here.
  */
 export async function getExpensesByCategory(params: { from?: Date; to?: Date }) {
-  const operatingExpenses = await prisma.account.findUniqueOrThrow({ where: { code: "OPERATING_EXPENSES" } });
+  const operatingExpenses = await prisma.account.findFirstOrThrow({ where: { code: "OPERATING_EXPENSES" } });
   const entries = await prisma.ledgerEntry.findMany({
     where: {
       accountId: operatingExpenses.id,
@@ -678,7 +721,7 @@ export async function getFinancialSummary(params: { from?: Date; to?: Date }) {
   const totalOpex = opex.debits.plus(bankCharges.debits);
   const operatingResult = grossProfit.minus(totalOpex);
 
-  const supplierAdvancesAccount = await prisma.account.findUniqueOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
+  const supplierAdvancesAccount = await prisma.account.findFirstOrThrow({ where: { code: "SUPPLIER_ADVANCES" } });
   const customerBalances = await getCustomerBalances();
   const receivables = sumDecimal(customerBalances.map((c) => new Decimal(c.outstanding)));
   const supplierAdvancesOutstanding = await getAccountBalance(supplierAdvancesAccount.id);

@@ -31,6 +31,9 @@ export const PERMISSIONS = [
   "settings.manage",
   "audit.view",
   "investor.dashboard.view",
+  "branch.manage",
+  "reports.consolidated.view",
+  "invoice.approve",
 ] as const;
 
 export type PermissionCode = (typeof PERMISSIONS)[number];
@@ -62,6 +65,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionCode[]> = {
     "settings.manage",
     "audit.view",
     "investor.dashboard.view",
+    "invoice.approve",
   ],
   receiving: ["stock.receive", "stock.grade", "stock.transfer", "stock.count", "return.process"],
   picker: ["stock.count", "order.pick", "order.dispatch"],
@@ -77,6 +81,7 @@ export const ROLE_PERMISSIONS: Record<string, PermissionCode[]> = {
     "supplier.payment_details.view",
     "backdate.create",
     "export.data",
+    "invoice.approve",
   ],
   viewer: [], // read-only grants are explicit, per-report — none by default
   // Restricted portal login: sees only the Investor Dashboard, nothing else in the app.

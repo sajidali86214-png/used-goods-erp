@@ -11,6 +11,17 @@
 // enforced Prisma relations — validated by lookup in the service layer, not a
 // DB foreign key. Structural/operational entities (orders, lines, grades,
 // bins, cost layers, customers, accounts) use real relations throughout.
+//
+// MULTI-BRANCH: this business operates multiple physical branches, each
+// running as an almost fully independent unit (own catalog, suppliers,
+// customers, stock, orders, cash accounts, grading/channel/approval/FX
+// config) — only RBAC policy (Role/Permission/RolePermission), Currency,
+// ExpenseCategory/ReasonCode vocabulary, AppSetting, IdempotencyKey, and
+// Investor/InvestorTransaction (company-wide capital, not per-location) are
+// shared across branches. Every other model below carries a `branchId` and
+// is enforced by a Prisma Client Extension (backend/src/lib/branchScopeExtension.ts),
+// not by hand-written `where` clauses at each call site. See the "Multi-Branch
+// Data Isolation" plan for the full design/rationale.
 
 generator client {
   provider      = "prisma-client-js"
@@ -25,10 +36,76 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------- Branch (multi-branch foundation) ----------
+
+model Branch {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users                 User[]
+  approvalThresholds    ApprovalThreshold[]
+  auditEvents           AuditEvent[]
+  approvals             Approval[]
+  categories            Category[]
+  brands                Brand[]
+  products              Product[]
+  productPhotos         ProductPhoto[]
+  grades                Grade[]
+  bins                  Bin[]
+  salesChannels         SalesChannel[]
+  paymentMethodAccounts PaymentMethodAccount[]
+  suppliers             Supplier[]
+  purchaseOrders        PurchaseOrder[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  supplierAdvances      SupplierAdvance[]
+  supplierInvoices      SupplierInvoice[]
+  supplierInvoiceLines  SupplierInvoiceLine[]
+  supplierPayments      SupplierPayment[]
+  supplierCredits       SupplierCredit[]
+  grns                  GRN[]
+  grnLines              GRNLine[]
+  lots                  Lot[]
+  landedCostAllocations LandedCostAllocation[]
+  costLayers            CostLayer[]
+  stockMovements        StockMovement[]
+  stockStates           StockState[]
+  individualItems       IndividualItem[]
+  stockCounts           StockCount[]
+  stockCountLines       StockCountLine[]
+  mediaAssets           MediaAsset[]
+  importJobs            ImportJob[]
+  exchangeRateSnapshots ExchangeRateSnapshot[]
+  customers             Customer[]
+  salesOrders           SalesOrder[]
+  salesOrderLines       SalesOrderLine[]
+  bundleAllocations     BundleAllocation[]
+  reservations          Reservation[]
+  pickAllocations       PickAllocation[]
+  shipments             Shipment[]
+  shipmentLines         ShipmentLine[]
+  returnRequests        ReturnRequest[]
+  returnLines           ReturnLine[]
+  refunds               Refund[]
+  paymentReceipts       PaymentReceipt[]
+  paymentAllocations    PaymentAllocation[]
+  currencyConversions   CurrencyConversion[]
+  cancellations         Cancellation[]
+  accounts              Account[]
+  ledgerEntries         LedgerEntry[]
+  expenses              Expense[]
+  transfers             Transfer[]
+  ownerTransactions     OwnerTransaction[]
+  periodLocks           PeriodLock[]
+}
+
 // ---------- Identity & access (Stage 1) ----------
 
 model User {
   id           String    @id @default(uuid())
+  branchId     String @default("00000000-0000-0000-0000-000000000001")
   name         String
   email        String    @unique
   passwordHash String
@@ -38,14 +115,19 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
+  branch         Branch       @relation(fields: [branchId], references: [id])
   roles          UserRole[]
   auditEvents    AuditEvent[] @relation("AuditActor")
   approvalsGiven Approval[]   @relation("ApprovalDecider")
   approvalsAsked Approval[]   @relation("ApprovalRequester")
   investor       Investor?
+
+  @@index([branchId])
 }
 
 // Restricted investor portal access: links a login to an agreed profit share.
+// GLOBAL (not branch-scoped) — an investor funds the business as a whole,
+// not one specific branch.
 model Investor {
   id                 String   @id @default(uuid())
   name               String
@@ -65,6 +147,7 @@ model Investor {
 // Investor capital movements — never cash-available-for-distribution by
 // itself; the dashboard always shows this alongside (not instead of) the
 // calculated profit share, so nothing here ever stands in for an estimate.
+// GLOBAL, same reasoning as Investor above.
 model InvestorTransaction {
   id         String   @id @default(uuid())
   investorId String
@@ -77,12 +160,13 @@ model InvestorTransaction {
   investor Investor @relation(fields: [investorId], references: [id])
 }
 
-// Small singleton key/value store for app-wide config (e.g. the letterhead image) — not a per-user preference.
+// Small singleton key/value store for app-wide config (e.g. the letterhead image) — not a per-user preference. GLOBAL.
 model AppSetting {
   key   String @id
   value String
 }
 
+// GLOBAL — RBAC policy is a business-wide decision, not a per-branch one.
 model Role {
   id       String  @id @default(uuid())
   code     String  @unique // owner | manager | receiving | picker | seller | finance | viewer
@@ -103,6 +187,7 @@ model UserRole {
   @@id([userId, roleId])
 }
 
+// GLOBAL.
 model Permission {
   id    String @id @default(uuid())
   code  String @unique // e.g. cost.view, profit.view, refund.approve
@@ -122,15 +207,21 @@ model RolePermission {
 
 model ApprovalThreshold {
   id             String  @id @default(uuid())
+  branchId       String @default("00000000-0000-0000-0000-000000000001")
   scope          String // e.g. "refund_pkr", "discount_pct"
   roleId         String
   maxValue       Decimal @db.Decimal(18, 4)
   requiresSecond Boolean @default(false)
-  role           Role    @relation(fields: [roleId], references: [id])
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  role   Role   @relation(fields: [roleId], references: [id])
+
+  @@index([branchId])
 }
 
 model AuditEvent {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   actorUserId      String
   action           String
   entityType       String
@@ -142,13 +233,15 @@ model AuditEvent {
   approvedByUserId String?
   createdAt        DateTime @default(now())
 
-  actor User @relation("AuditActor", fields: [actorUserId], references: [id])
+  branch Branch @relation(fields: [branchId], references: [id])
+  actor  User   @relation("AuditActor", fields: [actorUserId], references: [id])
 
-  @@index([entityType, entityId])
+  @@index([branchId, entityType, entityId])
 }
 
 model Approval {
   id             String    @id @default(uuid())
+  branchId       String @default("00000000-0000-0000-0000-000000000001")
   entityType     String
   entityId       String
   requestedById  String
@@ -159,32 +252,48 @@ model Approval {
   createdAt      DateTime  @default(now())
   decidedAt      DateTime?
 
-  requestedBy User  @relation("ApprovalRequester", fields: [requestedById], references: [id])
-  decidedBy   User? @relation("ApprovalDecider", fields: [decidedById], references: [id])
+  branch      Branch @relation(fields: [branchId], references: [id])
+  requestedBy User   @relation("ApprovalRequester", fields: [requestedById], references: [id])
+  decidedBy   User?  @relation("ApprovalDecider", fields: [decidedById], references: [id])
+
+  @@index([branchId])
 }
 
 // ---------- Master / reference data (Stage 1) ----------
 
 model Category {
   id         String     @id @default(uuid())
-  name       String     @unique
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
+  name       String
   parentId   String?
   archivedAt DateTime?
-  parent     Category?  @relation("CategoryParent", fields: [parentId], references: [id])
-  children   Category[] @relation("CategoryParent")
-  products   Product[]
+
+  branch   Branch     @relation(fields: [branchId], references: [id])
+  parent   Category?  @relation("CategoryParent", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryParent")
+  products Product[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
 }
 
 model Brand {
   id         String    @id @default(uuid())
-  name       String    @unique
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
+  name       String
   archivedAt DateTime?
-  products   Product[]
+
+  branch   Branch    @relation(fields: [branchId], references: [id])
+  products Product[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
 }
 
 model Product {
   id               String    @id @default(uuid())
-  skuCode          String    @unique
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
+  skuCode          String
   name             String
   categoryId       String
   brandId          String?
@@ -199,6 +308,7 @@ model Product {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
+  branch          Branch              @relation(fields: [branchId], references: [id])
   category        Category            @relation(fields: [categoryId], references: [id])
   brand           Brand?              @relation(fields: [brandId], references: [id])
   photos          ProductPhoto[]
@@ -209,51 +319,69 @@ model Product {
   individualItems IndividualItem[]
   poLines         PurchaseOrderLine[]
   salesOrderLines SalesOrderLine[]
+
+  @@unique([branchId, skuCode])
+  @@index([branchId])
 }
 
 model ProductPhoto {
   id               String  @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   productId        String
   mediaAssetId     String
   isRepresentative Boolean @default(true)
   caption          String?
 
+  branch  Branch     @relation(fields: [branchId], references: [id])
   product Product    @relation(fields: [productId], references: [id])
   media   MediaAsset @relation(fields: [mediaAssetId], references: [id])
+
+  @@index([branchId])
 }
 
 model Grade {
   id         String    @id @default(uuid())
-  code       String    @unique // A | B | C | UNGRADED | ...
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
+  code       String // A | B | C | UNGRADED | ...
   label      String
   definition String?
   archivedAt DateTime?
 
+  branch               Branch              @relation(fields: [branchId], references: [id])
   costLayers           CostLayer[]
   movements            StockMovement[]
   stockStates          StockState[]
   individualItems      IndividualItem[]
   reservations         Reservation[]
   pickAllocations      PickAllocation[]
-  returnLinesOrigin    ReturnLine[]     @relation("ReturnLineOriginGrade")
-  returnLinesInspected ReturnLine[]     @relation("ReturnLineInspectedGrade")
+  returnLinesOrigin    ReturnLine[]        @relation("ReturnLineOriginGrade")
+  returnLinesInspected ReturnLine[]        @relation("ReturnLineInspectedGrade")
   purchaseOrderLines   PurchaseOrderLine[]
   grnLines             GRNLine[]
+
+  @@unique([branchId, code])
+  @@index([branchId])
 }
 
 model Bin {
   id         String    @id @default(uuid())
-  code       String    @unique
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
+  code       String
   label      String
   archivedAt DateTime?
 
+  branch          Branch           @relation(fields: [branchId], references: [id])
   costLayers      CostLayer[]
   movements       StockMovement[]
   stockStates     StockState[]
   reservations    Reservation[]
   pickAllocations PickAllocation[]
+
+  @@unique([branchId, code])
+  @@index([branchId])
 }
 
+// GLOBAL — a currency code means the same thing everywhere.
 model Currency {
   id            String  @id @default(uuid())
   code          String  @unique // PKR | GBP | USD | ...
@@ -264,26 +392,39 @@ model Currency {
 
 model SalesChannel {
   id                   String    @id @default(uuid())
-  code                 String    @unique // fleek | local_market | friend | online | instagram
+  branchId             String @default("00000000-0000-0000-0000-000000000001")
+  code                 String // fleek | local_market | friend | online | instagram
   label                String
   defaultCommissionPct Decimal?  @db.Decimal(6, 3)
   archivedAt           DateTime?
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@unique([branchId, code])
+  @@index([branchId])
 }
 
 model PaymentMethodAccount {
   id         String    @id @default(uuid())
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
   label      String
   currencyId String
   kind       String // cash | bank | mobile_wallet
   archivedAt DateTime?
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
 }
 
+// GLOBAL — pure vocabulary; the rows that use it (Expense) are branch-scoped.
 model ExpenseCategory {
   id         String    @id @default(uuid())
   label      String
   archivedAt DateTime?
 }
 
+// GLOBAL — pure vocabulary; the rows that use it (ReturnLine) are branch-scoped.
 model ReasonCode {
   id         String    @id @default(uuid())
   kind       String // cancellation | return | adjustment
@@ -295,6 +436,7 @@ model ReasonCode {
 
 model Supplier {
   id                String   @id @default(uuid())
+  branchId          String @default("00000000-0000-0000-0000-000000000001")
   name              String
   contactPerson     String?
   phone             String?
@@ -311,6 +453,7 @@ model Supplier {
   approvalStatus    String   @default("pending")
   createdAt         DateTime @default(now())
 
+  branch         Branch            @relation(fields: [branchId], references: [id])
   purchaseOrders PurchaseOrder[]
   advances       SupplierAdvance[]
   invoices       SupplierInvoice[]
@@ -318,11 +461,14 @@ model Supplier {
   credits        SupplierCredit[]
   grns           GRN[]
   lots           Lot[]
+
+  @@index([branchId])
 }
 
 model PurchaseOrder {
   id                  String    @id @default(uuid())
-  poNumber            String    @unique
+  branchId            String @default("00000000-0000-0000-0000-000000000001")
+  poNumber            String
   supplierId          String
   status              String    @default("draft") // draft | approved | cancelled | closed
   currencyId          String
@@ -331,15 +477,20 @@ model PurchaseOrder {
   notes               String?
   createdAt           DateTime  @default(now())
 
+  branch   Branch              @relation(fields: [branchId], references: [id])
   supplier Supplier            @relation(fields: [supplierId], references: [id])
   lines    PurchaseOrderLine[]
   advances SupplierAdvance[]
   invoices SupplierInvoice[]
   credits  SupplierCredit[]
+
+  @@unique([branchId, poNumber])
+  @@index([branchId])
 }
 
 model PurchaseOrderLine {
   id              String   @id @default(uuid())
+  branchId        String @default("00000000-0000-0000-0000-000000000001")
   poId            String
   productId       String
   gradeId         String? // intended grade mix ordered (e.g. AB, C) — informational until received
@@ -348,14 +499,18 @@ model PurchaseOrderLine {
   discount        Decimal? @db.Decimal(18, 4)
   additionalCosts Decimal? @db.Decimal(18, 4)
 
+  branch   Branch        @relation(fields: [branchId], references: [id])
   po       PurchaseOrder @relation(fields: [poId], references: [id])
   product  Product       @relation(fields: [productId], references: [id])
   grade    Grade?        @relation(fields: [gradeId], references: [id])
   grnLines GRNLine[]
+
+  @@index([branchId])
 }
 
 model SupplierAdvance {
   id                     String   @id @default(uuid())
+  branchId               String @default("00000000-0000-0000-0000-000000000001")
   supplierId             String
   poId                   String?
   currencyId             String
@@ -365,27 +520,68 @@ model SupplierAdvance {
   status                 String   @default("open") // open | partially_applied | applied
   reference              String?
 
+  branch   Branch         @relation(fields: [branchId], references: [id])
   supplier Supplier       @relation(fields: [supplierId], references: [id])
   po       PurchaseOrder? @relation(fields: [poId], references: [id])
+
+  @@index([branchId])
 }
 
 model SupplierInvoice {
   id             String   @id @default(uuid())
+  branchId       String @default("00000000-0000-0000-0000-000000000001")
   supplierId     String
   poId           String?
   currencyId     String
   amount         Decimal  @db.Decimal(18, 4)
   invoiceDate    DateTime
+  dueDate        DateTime?
   matchedAdvance Decimal  @default(0) @db.Decimal(18, 4)
-  status         String   @default("open")
+  status         String   @default("open") // open | partially_matched | matched — advance-match progress only
+  // Separate lifecycle dimension from `status` above: whether the invoice
+  // itself has been approved (posting Dr GRNI / Cr Accounts Payable), not
+  // whether it's been matched against a prepaid advance.
+  approvalStatus   String    @default("pending_approval") // pending_approval | approved
+  approvedByUserId String?
+  approvedAt       DateTime?
+  // Set at creation if the three-way match (this invoice vs the GRN lines vs
+  // the PO lines they were received against) found a quantity/price mismatch.
+  // Never blocks creation — spec section 4: "hold exceptions for approval".
+  hasVariance Boolean @default(false)
+  isDisputed  Boolean @default(false)
 
-  supplier Supplier          @relation(fields: [supplierId], references: [id])
-  po       PurchaseOrder?    @relation(fields: [poId], references: [id])
+  branch   Branch                 @relation(fields: [branchId], references: [id])
+  supplier Supplier               @relation(fields: [supplierId], references: [id])
+  po       PurchaseOrder?         @relation(fields: [poId], references: [id])
   payments SupplierPayment[]
+  lines    SupplierInvoiceLine[]
+
+  @@index([branchId])
+}
+
+// Links an invoice line to the specific GRN line it bills for — this is what
+// makes the match a real three-way match (PO vs GRN vs invoice), not just an
+// invoice-total-vs-PO-total comparison.
+model SupplierInvoiceLine {
+  id            String   @id @default(uuid())
+  branchId      String   @default("00000000-0000-0000-0000-000000000001")
+  invoiceId     String
+  grnLineId     String
+  quantity      Decimal  @db.Decimal(18, 4)
+  unitPrice     Decimal  @db.Decimal(18, 4)
+  amount        Decimal  @db.Decimal(18, 4)
+  varianceNotes String?
+
+  branch  Branch          @relation(fields: [branchId], references: [id])
+  invoice SupplierInvoice @relation(fields: [invoiceId], references: [id])
+  grnLine GRNLine         @relation(fields: [grnLineId], references: [id])
+
+  @@index([branchId])
 }
 
 model SupplierPayment {
   id                     String   @id @default(uuid())
+  branchId               String @default("00000000-0000-0000-0000-000000000001")
   supplierId             String
   invoiceId              String?
   amount                 Decimal  @db.Decimal(18, 4)
@@ -394,8 +590,11 @@ model SupplierPayment {
   paymentMethodAccountId String
   reference              String?
 
+  branch   Branch           @relation(fields: [branchId], references: [id])
   supplier Supplier         @relation(fields: [supplierId], references: [id])
   invoice  SupplierInvoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([branchId])
 }
 
 // Money or a credit a supplier gives back to us — overpayment, returned
@@ -404,6 +603,7 @@ model SupplierPayment {
 // so it shows up in the same unapplied-advance balance a real advance does.
 model SupplierCredit {
   id                 String   @id @default(uuid())
+  branchId           String @default("00000000-0000-0000-0000-000000000001")
   supplierId         String
   poId               String?
   currencyId         String
@@ -413,13 +613,17 @@ model SupplierCredit {
   reason             String
   createdAt          DateTime @default(now())
 
+  branch   Branch         @relation(fields: [branchId], references: [id])
   supplier Supplier       @relation(fields: [supplierId], references: [id])
   po       PurchaseOrder? @relation(fields: [poId], references: [id])
+
+  @@index([branchId])
 }
 
 model GRN {
   id                String   @id @default(uuid())
-  grnNumber         String   @unique
+  branchId          String @default("00000000-0000-0000-0000-000000000001")
+  grnNumber         String
   supplierId        String
   receiptDate       DateTime
   deliveryReference String?
@@ -427,13 +631,18 @@ model GRN {
   notes             String?
   createdAt         DateTime @default(now())
 
+  branch   Branch    @relation(fields: [branchId], references: [id])
   supplier Supplier  @relation(fields: [supplierId], references: [id])
   lines    GRNLine[]
   lots     Lot[]
+
+  @@unique([branchId, grnNumber])
+  @@index([branchId])
 }
 
 model GRNLine {
   id              String  @id @default(uuid())
+  branchId        String @default("00000000-0000-0000-0000-000000000001")
   grnId           String
   poLineId        String?
   productId       String
@@ -442,16 +651,21 @@ model GRNLine {
   rejectedQty     Decimal @default(0) @db.Decimal(18, 4)
   inspectionNotes String?
 
-  grn     GRN                @relation(fields: [grnId], references: [id])
-  poLine  PurchaseOrderLine? @relation(fields: [poLineId], references: [id])
-  product Product            @relation(fields: [productId], references: [id])
-  grade   Grade?             @relation(fields: [gradeId], references: [id])
-  lots    Lot[]
+  branch       Branch                @relation(fields: [branchId], references: [id])
+  grn          GRN                   @relation(fields: [grnId], references: [id])
+  poLine       PurchaseOrderLine?    @relation(fields: [poLineId], references: [id])
+  product      Product               @relation(fields: [productId], references: [id])
+  grade        Grade?                @relation(fields: [gradeId], references: [id])
+  lots         Lot[]
+  invoiceLines SupplierInvoiceLine[]
+
+  @@index([branchId])
 }
 
 model Lot {
   id                 String   @id @default(uuid())
-  lotCode            String   @unique
+  branchId           String @default("00000000-0000-0000-0000-000000000001")
+  lotCode            String
   grnId              String?
   grnLineId          String?
   supplierId         String?
@@ -462,16 +676,21 @@ model Lot {
   notes              String?
   createdAt          DateTime @default(now())
 
+  branch      Branch                 @relation(fields: [branchId], references: [id])
   grn         GRN?                   @relation(fields: [grnId], references: [id])
   grnLine     GRNLine?               @relation(fields: [grnLineId], references: [id])
   supplier    Supplier?              @relation(fields: [supplierId], references: [id])
   product     Product                @relation(fields: [productId], references: [id])
   costLayers  CostLayer[]
   landedCosts LandedCostAllocation[]
+
+  @@unique([branchId, lotCode])
+  @@index([branchId])
 }
 
 model LandedCostAllocation {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   lotId            String
   costType         String // freight | handling | other
   amount           Decimal  @db.Decimal(18, 4)
@@ -480,7 +699,10 @@ model LandedCostAllocation {
   appliedAt        DateTime @default(now())
   approvedByUserId String
 
-  lot Lot @relation(fields: [lotId], references: [id])
+  branch Branch @relation(fields: [branchId], references: [id])
+  lot    Lot    @relation(fields: [lotId], references: [id])
+
+  @@index([branchId])
 }
 
 // CostLayer is the unit stock valuation and COGS draw from.
@@ -488,6 +710,7 @@ model LandedCostAllocation {
 // cost layers at the SAME unitCost (quantity + value conservation).
 model CostLayer {
   id                String   @id @default(uuid())
+  branchId          String @default("00000000-0000-0000-0000-000000000001")
   lotId             String
   gradeId           String
   binId             String
@@ -497,6 +720,7 @@ model CostLayer {
   splitFromLayerId  String?
   createdAt         DateTime @default(now())
 
+  branch          Branch           @relation(fields: [branchId], references: [id])
   lot             Lot              @relation(fields: [lotId], references: [id])
   grade           Grade            @relation(fields: [gradeId], references: [id])
   bin             Bin              @relation(fields: [binId], references: [id])
@@ -509,13 +733,14 @@ model CostLayer {
   pickAllocations PickAllocation[]
   returnLines     ReturnLine[]
 
-  @@index([lotId, gradeId, binId])
+  @@index([branchId, lotId, gradeId, binId])
 }
 
 // ---------- Stock & movements (Stage 1) ----------
 
 model StockMovement {
   id                  String   @id @default(uuid())
+  branchId            String @default("00000000-0000-0000-0000-000000000001")
   type                String // receive_to_inspection | grading_transfer | bin_transfer | reserve | release | pick | dispatch | return_receipt | return_to_bulk | write_off | count_adjustment | supplier_return_dispatch
   productId           String
   gradeId             String
@@ -527,18 +752,20 @@ model StockMovement {
   actorUserId         String
   occurredAt          DateTime @default(now())
 
+  branch    Branch    @relation(fields: [branchId], references: [id])
   product   Product   @relation(fields: [productId], references: [id])
   grade     Grade     @relation(fields: [gradeId], references: [id])
   bin       Bin       @relation(fields: [binId], references: [id])
   costLayer CostLayer @relation(fields: [costLayerId], references: [id])
 
-  @@index([productId, gradeId, binId, costLayerId])
+  @@index([branchId, productId, gradeId, binId, costLayerId])
 }
 
 // Materialized balance, reconciled against StockMovement. Never written to
 // directly except by the movement-posting service inside the same transaction.
 model StockState {
   id          String  @id @default(uuid())
+  branchId    String @default("00000000-0000-0000-0000-000000000001")
   productId   String
   gradeId     String
   binId       String
@@ -548,16 +775,25 @@ model StockState {
   reservedQty Decimal @default(0) @db.Decimal(18, 4)
   version     Int     @default(0) // optimistic lock for concurrent reservation/dispatch
 
+  branch    Branch    @relation(fields: [branchId], references: [id])
   product   Product   @relation(fields: [productId], references: [id])
   grade     Grade     @relation(fields: [gradeId], references: [id])
   bin       Bin       @relation(fields: [binId], references: [id])
   costLayer CostLayer @relation(fields: [costLayerId], references: [id])
 
+  // Not branchId-prefixed: every component (costLayerId especially) is already
+  // scoped to one branch via its own FK chain, so two branches can never
+  // collide on this key — adding branchId here would only break every
+  // existing compound-key lookup across the stock/sales modules for no real
+  // safety gain. branchId still gets its own plain index below, for the
+  // enforcement extension's read-filtering.
   @@unique([productId, gradeId, binId, costLayerId, state])
+  @@index([branchId])
 }
 
 model IndividualItem {
   id                    String   @id @default(uuid())
+  branchId              String @default("00000000-0000-0000-0000-000000000001")
   productId             String
   sourceCostLayerId     String
   gradeId               String
@@ -566,25 +802,33 @@ model IndividualItem {
   returnedToMovementId  String?
   createdAt             DateTime @default(now())
 
+  branch          Branch       @relation(fields: [branchId], references: [id])
   product         Product      @relation(fields: [productId], references: [id])
   sourceCostLayer CostLayer    @relation(fields: [sourceCostLayerId], references: [id])
   grade           Grade        @relation(fields: [gradeId], references: [id])
   photos          MediaAsset[]
+
+  @@index([branchId])
 }
 
 model StockCount {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   countDate        DateTime
   binId            String?
   status           String   @default("draft") // draft | submitted | approved
   approvedByUserId String?
   createdAt        DateTime @default(now())
 
-  lines StockCountLine[]
+  branch Branch           @relation(fields: [branchId], references: [id])
+  lines  StockCountLine[]
+
+  @@index([branchId])
 }
 
 model StockCountLine {
   id           String  @id @default(uuid())
+  branchId     String @default("00000000-0000-0000-0000-000000000001")
   stockCountId String
   productId    String
   gradeId      String
@@ -593,13 +837,17 @@ model StockCountLine {
   systemQty    Decimal @db.Decimal(18, 4)
   varianceQty  Decimal @db.Decimal(18, 4)
 
+  branch     Branch     @relation(fields: [branchId], references: [id])
   stockCount StockCount @relation(fields: [stockCountId], references: [id])
+
+  @@index([branchId])
 }
 
 // ---------- Media (Stage 1) ----------
 
 model MediaAsset {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   kind             String // product | lot | order | individual_item | attachment
   storageKey       String
   mimeType         String
@@ -608,15 +856,19 @@ model MediaAsset {
   uploadStatus     String   @default("pending") // pending | complete | failed
   createdAt        DateTime @default(now())
 
+  branch           Branch          @relation(fields: [branchId], references: [id])
   productPhotos    ProductPhoto[]
   individualItemId String?
   individualItem   IndividualItem? @relation(fields: [individualItemId], references: [id])
+
+  @@index([branchId])
 }
 
 // ---------- Imports (Stage 1 tooling) ----------
 
 model ImportJob {
   id            String   @id @default(uuid())
+  branchId      String @default("00000000-0000-0000-0000-000000000001")
   kind          String // products | suppliers | opening_stock
   fileRef       String
   status        String   @default("pending") // pending | validated | committed | failed
@@ -624,12 +876,17 @@ model ImportJob {
   resultSummary Json?
   errors        Json?
   createdAt     DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
 }
 
 // ---------- Exchange rates (Stage 1, used from Stage 2) ----------
 
 model ExchangeRateSnapshot {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   fromCurrencyId   String
   toCurrencyId     String // PKR by convention
   rate             Decimal  @db.Decimal(18, 6)
@@ -638,6 +895,10 @@ model ExchangeRateSnapshot {
   isManualOverride Boolean  @default(false)
   overrideReason   String?
   overrideByUserId String?
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
 }
 
 // =====================================================================
@@ -648,6 +909,7 @@ model ExchangeRateSnapshot {
 
 model Customer {
   id        String   @id @default(uuid())
+  branchId  String @default("00000000-0000-0000-0000-000000000001")
   name      String
   contact   String? // phone or email
   address   String?
@@ -657,34 +919,39 @@ model Customer {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  branch          Branch           @relation(fields: [branchId], references: [id])
   orders          SalesOrder[]
   paymentReceipts PaymentReceipt[]
+
+  @@index([branchId])
 }
 
 model SalesOrder {
-  id                String   @id @default(uuid())
-  orderNumber       String   @unique
-  channelId         String // SalesChannel.id, plain reference (see file header)
-  externalOrderId   String?
-  customerId        String
-  currencyId        String
-  status            String   @default("draft") // draft | confirmed | partially_cancelled | cancelled | closed
-  paymentStatus     String   @default("unpaid") // unpaid | partially_paid | paid
-  fulfilmentStatus  String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered | returned | cancelled
-  qcStatus          String   @default("pending") // pending | approved | rejected — manual quality-check gate before an order ships
-  returnStatus      String   @default("none") // none | requested | authorized | partially_received | received | inspected | resolved
-  refundStatus      String   @default("none") // none | pending | partially_refunded | refunded
-  salespersonUserId String?
-  notes             String?
-  shippingPerUnit   Decimal? @db.Decimal(18, 4) // per-piece shipping cost; total = shippingPerUnit * sum(line quantities)
-  commissionType    String? // percentage | fixed
-  commissionValue   Decimal? @db.Decimal(18, 4) // meaning depends on commissionType: a % or an absolute amount
+  id                    String   @id @default(uuid())
+  branchId              String @default("00000000-0000-0000-0000-000000000001")
+  orderNumber           String
+  channelId             String // SalesChannel.id, plain reference (see file header)
+  externalOrderId       String?
+  customerId            String
+  currencyId            String
+  status                String   @default("draft") // draft | confirmed | partially_cancelled | cancelled | closed
+  paymentStatus         String   @default("unpaid") // unpaid | partially_paid | paid
+  fulfilmentStatus      String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered | returned | cancelled
+  qcStatus              String   @default("pending") // pending | approved | rejected — manual quality-check gate before an order ships
+  returnStatus          String   @default("none") // none | requested | authorized | partially_received | received | inspected | resolved
+  refundStatus          String   @default("none") // none | pending | partially_refunded | refunded
+  salespersonUserId     String?
+  notes                 String?
+  shippingPerUnit       Decimal? @db.Decimal(18, 4) // per-piece shipping cost; total = shippingPerUnit * sum(line quantities)
+  commissionType        String? // percentage | fixed
+  commissionValue       Decimal? @db.Decimal(18, 4) // meaning depends on commissionType: a % or an absolute amount
   paymentReceivedAmount Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark payment received" popup — no ledger/account impact
   returnedQuantity      Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark returned" popup — pieces returned, not stock-movement-backed
   refundAmount          Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark returned" popup
   cancellationAmount    Decimal? @db.Decimal(18, 4) // manual entry from the quick "mark cancelled" popup
-  createdAt         DateTime @default(now())
+  createdAt             DateTime @default(now())
 
+  branch             Branch              @relation(fields: [branchId], references: [id])
   customer           Customer            @relation(fields: [customerId], references: [id])
   lines              SalesOrderLine[]
   shipments          Shipment[]
@@ -692,11 +959,13 @@ model SalesOrder {
   refunds            Refund[]
   paymentAllocations PaymentAllocation[]
 
-  @@index([channelId, externalOrderId]) // duplicate-order detection (screenshot flow, Stage 3)
+  @@unique([branchId, orderNumber])
+  @@index([branchId, channelId, externalOrderId]) // duplicate-order detection (screenshot flow, Stage 3)
 }
 
 model SalesOrderLine {
   id                   String   @id @default(uuid())
+  branchId             String @default("00000000-0000-0000-0000-000000000001")
   orderId              String
   productId            String
   gradeRequirementType String   @default("none") // none | allowed_set | exact_composition
@@ -712,6 +981,7 @@ model SalesOrderLine {
   taxesFees            Decimal? @db.Decimal(18, 4)
   createdAt            DateTime @default(now())
 
+  branch           Branch            @relation(fields: [branchId], references: [id])
   order            SalesOrder        @relation(fields: [orderId], references: [id])
   product          Product           @relation(fields: [productId], references: [id])
   bundleAllocation BundleAllocation?
@@ -721,20 +991,24 @@ model SalesOrderLine {
   returnLines      ReturnLine[]
   cancellations    Cancellation[]
 
-  @@index([bundleGroupId])
+  @@index([branchId, bundleGroupId])
 }
 
 // Derived per-line revenue when an order line is part of a bundle total price
 // (spec section 7.1 — allocations must sum exactly to the bundle total).
 model BundleAllocation {
   id                 String   @id @default(uuid())
+  branchId           String @default("00000000-0000-0000-0000-000000000001")
   orderLineId        String   @unique
   derivedUnitRevenue Decimal  @db.Decimal(18, 4)
   method             String   @default("proportional_piece_count") // proportional_piece_count | explicit
   approvedOverride   Boolean  @default(false)
   createdAt          DateTime @default(now())
 
+  branch    Branch         @relation(fields: [branchId], references: [id])
   orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
+
+  @@index([branchId])
 }
 
 // Reservations reduce StockState.availableQty (= onHand - reserved) without
@@ -743,6 +1017,7 @@ model BundleAllocation {
 // reserve the same physical pieces (acceptance test #7).
 model Reservation {
   id          String    @id @default(uuid())
+  branchId    String @default("00000000-0000-0000-0000-000000000001")
   orderLineId String
   costLayerId String
   gradeId     String
@@ -752,16 +1027,18 @@ model Reservation {
   expiresAt   DateTime?
   createdAt   DateTime  @default(now())
 
+  branch    Branch         @relation(fields: [branchId], references: [id])
   orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
   costLayer CostLayer      @relation(fields: [costLayerId], references: [id])
   grade     Grade          @relation(fields: [gradeId], references: [id])
   bin       Bin            @relation(fields: [binId], references: [id])
 
-  @@index([costLayerId, status])
+  @@index([branchId, costLayerId, status])
 }
 
 model PickAllocation {
   id           String   @id @default(uuid())
+  branchId     String @default("00000000-0000-0000-0000-000000000001")
   orderLineId  String
   costLayerId  String
   gradeId      String
@@ -770,16 +1047,20 @@ model PickAllocation {
   pickerUserId String
   createdAt    DateTime @default(now())
 
+  branch        Branch         @relation(fields: [branchId], references: [id])
   orderLine     SalesOrderLine @relation(fields: [orderLineId], references: [id])
   costLayer     CostLayer      @relation(fields: [costLayerId], references: [id])
   grade         Grade          @relation(fields: [gradeId], references: [id])
   bin           Bin            @relation(fields: [binId], references: [id])
   shipmentLines ShipmentLine[]
   returnLines   ReturnLine[]
+
+  @@index([branchId])
 }
 
 model Shipment {
   id           String    @id @default(uuid())
+  branchId     String @default("00000000-0000-0000-0000-000000000001")
   orderId      String
   courier      String?
   trackingRef  String?
@@ -789,36 +1070,48 @@ model Shipment {
   notes        String?
   createdAt    DateTime  @default(now())
 
-  order SalesOrder     @relation(fields: [orderId], references: [id])
-  lines ShipmentLine[]
+  branch Branch         @relation(fields: [branchId], references: [id])
+  order  SalesOrder     @relation(fields: [orderId], references: [id])
+  lines  ShipmentLine[]
+
+  @@index([branchId])
 }
 
 model ShipmentLine {
   id               String  @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   shipmentId       String
   orderLineId      String
   pickAllocationId String?
   quantity         Decimal @db.Decimal(18, 4)
 
+  branch         Branch          @relation(fields: [branchId], references: [id])
   shipment       Shipment        @relation(fields: [shipmentId], references: [id])
   orderLine      SalesOrderLine  @relation(fields: [orderLineId], references: [id])
   pickAllocation PickAllocation? @relation(fields: [pickAllocationId], references: [id])
+
+  @@index([branchId])
 }
 
 model ReturnRequest {
   id                String   @id @default(uuid())
+  branchId          String @default("00000000-0000-0000-0000-000000000001")
   orderId           String
   status            String   @default("requested") // requested | authorized | partially_received | received | inspected | resolved
   requestedByUserId String
   createdAt         DateTime @default(now())
 
+  branch  Branch       @relation(fields: [branchId], references: [id])
   order   SalesOrder   @relation(fields: [orderId], references: [id])
   lines   ReturnLine[]
   refunds Refund[]
+
+  @@index([branchId])
 }
 
 model ReturnLine {
   id                     String   @id @default(uuid())
+  branchId               String @default("00000000-0000-0000-0000-000000000001")
   returnRequestId        String
   orderLineId            String
   sourcePickAllocationId String?
@@ -831,16 +1124,20 @@ model ReturnLine {
   assumptionNotes        String?
   createdAt              DateTime @default(now())
 
+  branch               Branch          @relation(fields: [branchId], references: [id])
   returnRequest        ReturnRequest   @relation(fields: [returnRequestId], references: [id])
   orderLine            SalesOrderLine  @relation(fields: [orderLineId], references: [id])
   sourcePickAllocation PickAllocation? @relation(fields: [sourcePickAllocationId], references: [id])
   costLayer            CostLayer       @relation(fields: [costLayerId], references: [id])
   originGrade          Grade           @relation("ReturnLineOriginGrade", fields: [originGradeId], references: [id])
   inspectedGrade       Grade?          @relation("ReturnLineInspectedGrade", fields: [inspectedGradeId], references: [id])
+
+  @@index([branchId])
 }
 
 model Refund {
   id                     String    @id @default(uuid())
+  branchId               String @default("00000000-0000-0000-0000-000000000001")
   returnRequestId        String?
   orderId                String
   amount                 Decimal   @db.Decimal(18, 4)
@@ -849,8 +1146,11 @@ model Refund {
   paidAt                 DateTime?
   paymentMethodAccountId String?
 
+  branch        Branch         @relation(fields: [branchId], references: [id])
   returnRequest ReturnRequest? @relation(fields: [returnRequestId], references: [id])
   order         SalesOrder     @relation(fields: [orderId], references: [id])
+
+  @@index([branchId])
 }
 
 // Customer receipt against one or more orders (spec section 9: Fleek/other
@@ -862,6 +1162,7 @@ model Refund {
 // indicative/locked receipt rate (spec section 9).
 model PaymentReceipt {
   id                     String   @id @default(uuid())
+  branchId               String @default("00000000-0000-0000-0000-000000000001")
   customerId             String?
   currencyId             String
   amount                 Decimal  @db.Decimal(18, 4)
@@ -871,19 +1172,26 @@ model PaymentReceipt {
   exchangeRateSnapshotId String
   createdAt              DateTime @default(now())
 
+  branch             Branch              @relation(fields: [branchId], references: [id])
   customer           Customer?           @relation(fields: [customerId], references: [id])
   destinationAccount Account             @relation(fields: [destinationAccountId], references: [id])
   allocations        PaymentAllocation[]
+
+  @@index([branchId])
 }
 
 model PaymentAllocation {
   id               String  @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   paymentReceiptId String
   orderId          String
   amount           Decimal @db.Decimal(18, 4)
 
+  branch         Branch         @relation(fields: [branchId], references: [id])
   paymentReceipt PaymentReceipt @relation(fields: [paymentReceiptId], references: [id])
   order          SalesOrder     @relation(fields: [orderId], references: [id])
+
+  @@index([branchId])
 }
 
 // GBP held in a GBP account and later converted to PKR are separate
@@ -891,6 +1199,7 @@ model PaymentAllocation {
 // equals the eventual conversion rate (spec section 9).
 model CurrencyConversion {
   id            String   @id @default(uuid())
+  branchId      String @default("00000000-0000-0000-0000-000000000001")
   fromAccountId String
   toAccountId   String
   fromAmount    Decimal  @db.Decimal(18, 4)
@@ -899,12 +1208,16 @@ model CurrencyConversion {
   bankCharges   Decimal? @db.Decimal(18, 4)
   convertedAt   DateTime @default(now())
 
+  branch      Branch  @relation(fields: [branchId], references: [id])
   fromAccount Account @relation("ConversionFrom", fields: [fromAccountId], references: [id])
   toAccount   Account @relation("ConversionTo", fields: [toAccountId], references: [id])
+
+  @@index([branchId])
 }
 
 model Cancellation {
   id               String   @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   orderLineId      String
   qty              Decimal  @db.Decimal(18, 4)
   reason           String
@@ -914,14 +1227,18 @@ model Cancellation {
   approvedByUserId String?
   createdAt        DateTime @default(now())
 
+  branch    Branch         @relation(fields: [branchId], references: [id])
   orderLine SalesOrderLine @relation(fields: [orderLineId], references: [id])
+
+  @@index([branchId])
 }
 
 // ---------- Finance ----------
 
 model Account {
   id         String  @id @default(uuid())
-  code       String? @unique // stable key for seeded control accounts (e.g. "ACCOUNTS_RECEIVABLE"); null for ordinary bank/cash accounts
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
+  code       String? // stable key for seeded control accounts (e.g. "ACCOUNTS_RECEIVABLE"); null for ordinary bank/cash accounts
   label      String
   currencyId String
   kind       String // cash | bank | platform_escrow | control
@@ -931,6 +1248,7 @@ model Account {
   nature     String  @default("asset") // asset | liability | equity | revenue | contra_revenue | expense
   isActive   Boolean @default(true)
 
+  branch            Branch               @relation(fields: [branchId], references: [id])
   ledgerEntries     LedgerEntry[]
   expenses          Expense[]
   transfersFrom     Transfer[]           @relation("TransferFrom")
@@ -939,12 +1257,16 @@ model Account {
   paymentReceipts   PaymentReceipt[]
   conversionsFrom   CurrencyConversion[] @relation("ConversionFrom")
   conversionsTo     CurrencyConversion[] @relation("ConversionTo")
+
+  @@unique([branchId, code])
+  @@index([branchId])
 }
 
 // Double-entry ledger. Balances are always derived by summing entries for an
 // account, never stored as an editable field (spec section 11).
 model LedgerEntry {
   id                  String   @id @default(uuid())
+  branchId            String @default("00000000-0000-0000-0000-000000000001")
   accountId           String
   direction           String // debit | credit
   amount              Decimal  @db.Decimal(18, 4)
@@ -954,13 +1276,15 @@ model LedgerEntry {
   postedAt            DateTime @default(now())
   reversalOfId        String?
 
+  branch  Branch  @relation(fields: [branchId], references: [id])
   account Account @relation(fields: [accountId], references: [id])
 
-  @@index([accountId, postedAt])
+  @@index([branchId, accountId, postedAt])
 }
 
 model Expense {
   id                  String   @id @default(uuid())
+  branchId            String @default("00000000-0000-0000-0000-000000000001")
   date                DateTime
   payeeType           String // supplier | other
   payeeId             String?
@@ -975,35 +1299,47 @@ model Expense {
   approvedByUserId    String?
   createdAt           DateTime @default(now())
 
+  branch  Branch  @relation(fields: [branchId], references: [id])
   account Account @relation(fields: [accountId], references: [id])
+
+  @@index([branchId])
 }
 
 // Explicitly excluded from revenue/expense reports (spec section 11).
 model Transfer {
   id            String   @id @default(uuid())
+  branchId      String @default("00000000-0000-0000-0000-000000000001")
   fromAccountId String
   toAccountId   String
   amount        Decimal  @db.Decimal(18, 4)
   currencyId    String
   occurredAt    DateTime @default(now())
 
+  branch      Branch  @relation(fields: [branchId], references: [id])
   fromAccount Account @relation("TransferFrom", fields: [fromAccountId], references: [id])
   toAccount   Account @relation("TransferTo", fields: [toAccountId], references: [id])
+
+  @@index([branchId])
 }
 
 // Owner contributions/withdrawals — excluded from trading P&L (spec section 11).
 model OwnerTransaction {
   id         String   @id @default(uuid())
+  branchId   String @default("00000000-0000-0000-0000-000000000001")
   accountId  String
   amount     Decimal  @db.Decimal(18, 4)
   type       String // contribution | withdrawal
   occurredAt DateTime @default(now())
 
+  branch  Branch  @relation(fields: [branchId], references: [id])
   account Account @relation(fields: [accountId], references: [id])
+
+  @@index([branchId])
 }
 
 model PeriodLock {
   id               String    @id @default(uuid())
+  branchId         String @default("00000000-0000-0000-0000-000000000001")
   periodStart      DateTime
   periodEnd        DateTime
   lockedByUserId   String
@@ -1011,6 +1347,10 @@ model PeriodLock {
   reopenedByUserId String?
   reopenedAt       DateTime?
   reopenReason     String?
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
 }
 
 // Caches a mutating request's response by client-supplied Idempotency-Key so
@@ -1018,6 +1358,7 @@ model PeriodLock {
 // first response) replays the same result instead of creating a second
 // order/payment/GRN/movement set (spec: never treat a repeated network
 // request as authorization to post a transaction twice; acceptance test #15).
+// GLOBAL — pure request-dedup infrastructure, not business data.
 model IdempotencyKey {
   id           String   @id @default(uuid())
   key          String

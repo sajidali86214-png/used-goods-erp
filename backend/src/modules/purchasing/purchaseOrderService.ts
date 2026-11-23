@@ -15,7 +15,7 @@ export async function generatePoNumber(): Promise<string> {
   return generateSequentialNumber({
     prefix: "PO",
     countExisting: () => prisma.purchaseOrder.count(),
-    exists: async (candidate) => !!(await prisma.purchaseOrder.findUnique({ where: { poNumber: candidate } })),
+    exists: async (candidate) => !!(await prisma.purchaseOrder.findFirst({ where: { poNumber: candidate } })),
   });
 }
 
@@ -28,6 +28,14 @@ export async function createPurchaseOrder(params: {
   notes?: string;
   lines: CreatePOLineInput[];
 }) {
+  // The branch-scope extension filters this by the caller's own branch, so a
+  // supplierId belonging to a different branch throws here rather than
+  // silently creating a PO that references another branch's supplier — the
+  // plain DB foreign key alone doesn't know about branches and wouldn't
+  // catch this (see the multi-branch data-isolation plan's note on
+  // composite-FK hardening being optional/future work, not done here).
+  await prisma.supplier.findUniqueOrThrow({ where: { id: params.supplierId } });
+
   const poNumber = await generatePoNumber();
   return prisma.purchaseOrder.create({
     data: {

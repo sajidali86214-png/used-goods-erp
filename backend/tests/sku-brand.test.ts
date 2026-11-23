@@ -30,7 +30,7 @@ describe("SKU auto-generation", () => {
 
     const sku = await generateSkuCode(category.id);
     expect(sku).not.toBe(`${prefix}-0001`);
-    const existing = await prisma.product.findUnique({ where: { skuCode: sku } });
+    const existing = await prisma.product.findFirst({ where: { skuCode: sku } });
     expect(existing).toBeNull();
   });
 });

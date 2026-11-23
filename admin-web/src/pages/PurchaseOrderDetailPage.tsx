@@ -62,6 +62,11 @@ interface POStatus {
   totalCredited: string;
   unappliedAdvance: string;
 }
+interface SupplierInvoiceSummary {
+  id: string;
+  amount: string;
+  approvalStatus: string;
+}
 interface AmendmentEvent {
   id: string;
   entityId: string;
@@ -82,6 +87,7 @@ export function PurchaseOrderDetailPage() {
   const po = useFetch<PurchaseOrder>(`/purchasing/orders/${id}`, [id]);
   const status = useFetch<POStatus>(`/purchasing/orders/${id}/status`, [id]);
   const amendments = useFetch<AmendmentEvent[]>(`/purchasing/orders/${id}/amendments`, [id]);
+  const invoices = useFetch<(SupplierInvoiceSummary & { po: { id: string } | null })[]>("/purchasing/invoices");
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
@@ -209,6 +215,15 @@ export function PurchaseOrderDetailPage() {
                 </td>
                 <td>
                   <strong>{Number(status.data.unappliedAdvance).toLocaleString()}</strong>
+                </td>
+              </tr>
+              <tr>
+                <td>Invoiced, unpaid</td>
+                <td>
+                  {(invoices.data ?? [])
+                    .filter((inv) => inv.po?.id === o.id && inv.approvalStatus === "approved")
+                    .reduce((sum, inv) => sum + Number(inv.amount), 0)
+                    .toLocaleString()}
                 </td>
               </tr>
             </tbody>

@@ -10,18 +10,13 @@ export async function seedReferenceData() {
   });
 
   for (const code of ["A", "B", "C", "UNGRADED"]) {
-    await prisma.grade.upsert({
-      where: { code },
-      update: {},
-      create: { code, label: code },
-    });
+    const existing = await prisma.grade.findFirst({ where: { code } });
+    if (!existing) await prisma.grade.create({ data: { code, label: code } });
   }
 
-  const bin = await prisma.bin.upsert({
-    where: { code: "MAIN" },
-    update: {},
-    create: { code: "MAIN", label: "Main warehouse" },
-  });
+  const bin =
+    (await prisma.bin.findFirst({ where: { code: "MAIN" } })) ??
+    (await prisma.bin.create({ data: { code: "MAIN", label: "Main warehouse" } }));
 
   const category = await prisma.category.create({ data: { name: `Category-${randomUUID()}` } });
 

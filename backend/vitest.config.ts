@@ -6,6 +6,7 @@ export default defineConfig({
     environment: "node",
     testTimeout: 20000,
     hookTimeout: 20000,
+    setupFiles: ["./tests/setup.ts"],
     // Test files share one real Postgres database and some global reference
     // rows (Grade/Bin/Currency upserts), so cross-file parallelism causes
     // genuine SERIALIZABLE conflicts unrelated to the business logic being

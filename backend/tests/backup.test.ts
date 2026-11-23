@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs/promises";
 import { PrismaClient } from "@prisma/client";
-import { prisma } from "../src/lib/prisma.js";
+import { prisma, rawPrisma } from "../src/lib/prisma.js";
 import { createEncryptedBackup, restoreAndVerify, dropDatabase } from "../src/modules/backup/backupService.js";
 import { seedReferenceData } from "./helpers.js";
 
@@ -24,8 +24,13 @@ const canRunRestoreTest =
 describe.skipIf(!canRunRestoreTest)("acceptance test #20: encrypted backup + isolated restore test", () => {
   it("dumps, encrypts, and restores into a fresh database with matching row counts", async () => {
     const { product, user } = await seedReferenceData();
-    const expectedUserCount = await prisma.user.count();
-    const expectedProductCount = await prisma.product.count();
+    // rawPrisma, not the branch-scoped client: pg_dump captures the WHOLE
+    // database regardless of branch, so the baseline this compares against
+    // must be unscoped too — the scoped client would only count the current
+    // test's own branch, an apples-to-oranges comparison once other
+    // branches' rows exist in the same database.
+    const expectedUserCount = await rawPrisma.user.count();
+    const expectedProductCount = await rawPrisma.product.count();
 
     const outputDir = path.join(os.tmpdir(), `erp-backup-test-${randomUUID()}`);
     const backup = await createEncryptedBackup({
