@@ -45,6 +45,7 @@ interface SalesOrder {
   fulfilmentStatus: string;
   paymentStatus: string;
   qcStatus: string;
+  currencyId: string;
   paymentReceivedAmount: string | null;
   returnedQuantity: string | null;
   refundAmount: string | null;
@@ -102,6 +103,10 @@ interface NewOrderDraft {
   customerId: string;
   channelId: string;
   currencyId: string;
+  // Only used/required when currencyId isn't PKR — see handleCurrencyChange.
+  exchangeRate: string;
+  exchangeRateSource: string;
+  exchangeRateIsManual: boolean;
   shippingPerUnit: string;
   commissionType: "none" | "percentage" | "fixed";
   commissionValue: string;
@@ -115,6 +120,9 @@ function emptyNewOrderDraft(): NewOrderDraft {
     customerId: "",
     channelId: "",
     currencyId: "",
+    exchangeRate: "",
+    exchangeRateSource: "",
+    exchangeRateIsManual: false,
     shippingPerUnit: "",
     commissionType: "none",
     commissionValue: "",
@@ -157,7 +165,20 @@ export function SalesOrdersPage() {
   const accounts = useFetch<Account[]>("/settings/accounts");
 
   const [draft, setDraft, clearDraft, draftSavedAt] = useDraft<NewOrderDraft>("new-sales-order", emptyNewOrderDraft());
-  const { showForm, externalOrderId, customerId, channelId, currencyId, shippingPerUnit, commissionType, commissionValue, lines } = draft;
+  const {
+    showForm,
+    externalOrderId,
+    customerId,
+    channelId,
+    currencyId,
+    exchangeRate,
+    exchangeRateSource,
+    exchangeRateIsManual,
+    shippingPerUnit,
+    commissionType,
+    commissionValue,
+    lines,
+  } = draft;
 
   function patchDraft(patch: Partial<NewOrderDraft>) {
     setDraft((d) => ({ ...d, ...patch }));
@@ -168,7 +189,25 @@ export function SalesOrdersPage() {
   const setExternalOrderId = (v: string) => patchDraft({ externalOrderId: v });
   const setCustomerId = (v: string) => patchDraft({ customerId: v });
   const setChannelId = (v: string) => patchDraft({ channelId: v });
-  const setCurrencyId = (v: string) => patchDraft({ currencyId: v });
+  const pkrCurrency = currencies.data?.find((c) => c.code === "PKR");
+  const selectedCurrency = currencies.data?.find((c) => c.id === currencyId);
+  const isNonPkrCurrency = !!selectedCurrency && selectedCurrency.code !== "PKR";
+
+  async function setCurrencyId(v: string) {
+    patchDraft({ currencyId: v, exchangeRate: "", exchangeRateSource: "", exchangeRateIsManual: false });
+    const currency = currencies.data?.find((c) => c.id === v);
+    if (!currency || !pkrCurrency || currency.code === "PKR") return;
+    try {
+      const latest = await api.get<{ rate: string } | null>(
+        `/finance/exchange-rates/latest?fromCurrencyId=${v}&toCurrencyId=${pkrCurrency.id}`,
+      );
+      if (latest) {
+        patchDraft({ exchangeRate: latest.rate, exchangeRateSource: "Auto-fetched latest rate", exchangeRateIsManual: false });
+      }
+    } catch {
+      // No latest rate captured yet for this pair — field stays blank, user enters one manually.
+    }
+  }
   const setShippingPerUnit = (v: string) => patchDraft({ shippingPerUnit: v });
   const setCommissionType = (v: NewOrderDraft["commissionType"]) => patchDraft({ commissionType: v });
   const setCommissionValue = (v: string) => patchDraft({ commissionValue: v });
@@ -322,6 +361,10 @@ export function SalesOrdersPage() {
         channelId,
         externalOrderId: externalOrderId || undefined,
         currencyId,
+        exchangeRate: isNonPkrCurrency ? Number(exchangeRate) : undefined,
+        exchangeRateSource: isNonPkrCurrency ? exchangeRateSource || undefined : undefined,
+        isManualOverride: isNonPkrCurrency ? exchangeRateIsManual : undefined,
+        overrideReason: isNonPkrCurrency && exchangeRateIsManual ? exchangeRateSource : undefined,
         shippingPerUnit: shippingPerUnit ? Number(shippingPerUnit) : undefined,
         commissionType: commissionType === "none" ? undefined : commissionType,
         commissionValue: commissionType === "none" ? undefined : Number(commissionValue) || 0,
@@ -463,7 +506,35 @@ export function SalesOrdersPage() {
                 ))}
               </select>
             </div>
+            {isNonPkrCurrency && (
+              <div className="field" style={{ maxWidth: 200 }}>
+                <label>
+                  Exchange rate (1 {selectedCurrency!.code} = ? PKR)
+                </label>
+                <input
+                  type="number"
+                  min={0.000001}
+                  step="0.000001"
+                  value={exchangeRate}
+                  onChange={(e) => patchDraft({ exchangeRate: e.target.value, exchangeRateIsManual: true })}
+                  required
+                />
+              </div>
+            )}
           </div>
+          {isNonPkrCurrency && (
+            <div className="form-row">
+              <div className="field">
+                <label>{exchangeRateIsManual ? "Reason for this rate (required — you changed it)" : "Rate source"}</label>
+                <input
+                  value={exchangeRateSource}
+                  onChange={(e) => patchDraft({ exchangeRateSource: e.target.value })}
+                  placeholder={exchangeRateIsManual ? "e.g. bank rate quoted today, customer-agreed rate" : undefined}
+                  required={exchangeRateIsManual}
+                />
+              </div>
+            </div>
+          )}
           <p style={{ color: "var(--text-muted)", fontSize: 12 }}>Line items (mixed-grade, no ratio promised, unless a grade requirement is set per line):</p>
           {lines.map((line, index) => (
             <div key={index} className="panel" style={{ marginBottom: 12 }}>
@@ -613,8 +684,12 @@ export function SalesOrdersPage() {
               {discountAmountPreview > 0 && ` − discount ${discountAmountPreview.toLocaleString()}`} = subtotal {subtotalPreview.toLocaleString()} −
               shipping {shippingTotalPreview.toLocaleString()}
               {commissionType !== "none" && ` − commission ${commissionAmountPreview.toLocaleString()} (on ${commissionBasePreview.toLocaleString()})`}{" "}
-              = <strong>net {netTotalPreview.toLocaleString()}</strong> ({totalQuantityPreview} pcs across {lines.length} line
+              = <strong>net {netTotalPreview.toLocaleString()} {selectedCurrency?.code ?? ""}</strong> ({totalQuantityPreview} pcs across{" "}
+              {lines.length} line
               {lines.length === 1 ? "" : "s"})
+              {isNonPkrCurrency && exchangeRate && (
+                <> — ≈ {(netTotalPreview * (Number(exchangeRate) || 0)).toLocaleString()} PKR at the rate above</>
+              )}
             </p>
           )}
 
@@ -704,7 +779,10 @@ export function SalesOrdersPage() {
                     </td>
                     <td>{o.lines.length}</td>
                     <td>{o.lines.reduce((sum, l) => sum + Number(l.quantity), 0).toLocaleString()}</td>
-                    <td>{Number(o.costSummary?.netTotal ?? 0).toLocaleString()}</td>
+                    <td>
+                      {Number(o.costSummary?.netTotal ?? 0).toLocaleString()}{" "}
+                      {currencies.data?.find((c) => c.id === o.currencyId)?.code ?? ""}
+                    </td>
                   </tr>
                   {pendingAction?.orderId === o.id && pendingAction.kind === "payment" && (
                     <tr>
@@ -888,9 +966,12 @@ function StatusActionPopup({
 }
 
 interface PaymentSummary {
-  amountDue: string;
+  nativeAmountDue: string;
+  nativeCurrencyId: string;
+  needsExchangeRate: boolean;
+  amountDue: string | null;
   amountReceived: string;
-  outstanding: string;
+  outstanding: string | null;
 }
 
 /**
@@ -912,7 +993,8 @@ function PaymentActionPopup({
   onRecorded: () => void;
 }) {
   const summary = useFetch<PaymentSummary>(`/sales/orders/${orderId}/payment-summary`, [orderId]);
-  const outstanding = Number(summary.data?.outstanding ?? 0);
+  const needsExchangeRate = summary.data?.needsExchangeRate ?? false;
+  const outstanding = summary.data?.outstanding !== null && summary.data?.outstanding !== undefined ? Number(summary.data.outstanding) : 0;
 
   const [amount, setAmount] = useState("");
   const [destinationAccountId, setDestinationAccountId] = useState("");
@@ -924,7 +1006,7 @@ function PaymentActionPopup({
   // Prefill the amount to the full outstanding balance once it's known —
   // editable, so a partial payment is just as easy to enter.
   useEffect(() => {
-    if (summary.data) setAmount((prev) => prev || String(outstanding));
+    if (summary.data && !needsExchangeRate) setAmount((prev) => prev || String(outstanding));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data]);
 
@@ -951,40 +1033,46 @@ function PaymentActionPopup({
     <form onSubmit={handleSubmit} style={{ padding: 12 }}>
       <strong>Record a payment</strong>
       <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "4px 0" }}>
-        {summary.data
-          ? `Received ${Number(summary.data.amountReceived).toLocaleString()} of ${Number(summary.data.amountDue).toLocaleString()} due — outstanding ${outstanding.toLocaleString()}.`
-          : "Loading balance..."}
+        {!summary.data
+          ? "Loading balance..."
+          : needsExchangeRate
+            ? `This order is ${Number(summary.data.nativeAmountDue).toLocaleString()} in a non-PKR currency with no exchange rate set yet — set one on the order before recording a payment (edit the order, or use the "Set exchange rate" action on its detail page).`
+            : `Received ${Number(summary.data.amountReceived).toLocaleString()} of ${Number(summary.data.amountDue).toLocaleString()} due — outstanding ${outstanding.toLocaleString()}.`}
       </p>
       {error && <div className="error-banner">{error}</div>}
-      <div className="form-row">
-        <div className="field" style={{ maxWidth: 160 }}>
-          <label>Amount received</label>
-          <input type="number" min={0.01} max={outstanding} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+      {!needsExchangeRate && (
+        <div className="form-row">
+          <div className="field" style={{ maxWidth: 160 }}>
+            <label>Amount received</label>
+            <input type="number" min={0.01} max={outstanding} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </div>
+          <div className="field" style={{ maxWidth: 220 }}>
+            <label>Receiving account</label>
+            <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)} required>
+              <option value="">Select...</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label} ({a.kind})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field" style={{ maxWidth: 160 }}>
+            <label>Payment date</label>
+            <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} required />
+          </div>
+          <div className="field" style={{ maxWidth: 200 }}>
+            <label>Reference (optional)</label>
+            <input value={bankReference} onChange={(e) => setBankReference(e.target.value)} placeholder="Bank/transaction ref" />
+          </div>
         </div>
-        <div className="field" style={{ maxWidth: 220 }}>
-          <label>Receiving account</label>
-          <select value={destinationAccountId} onChange={(e) => setDestinationAccountId(e.target.value)} required>
-            <option value="">Select...</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.label} ({a.kind})
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field" style={{ maxWidth: 160 }}>
-          <label>Payment date</label>
-          <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} required />
-        </div>
-        <div className="field" style={{ maxWidth: 200 }}>
-          <label>Reference (optional)</label>
-          <input value={bankReference} onChange={(e) => setBankReference(e.target.value)} placeholder="Bank/transaction ref" />
-        </div>
-      </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button type="submit" disabled={submitting || outstanding <= 0 || !destinationAccountId}>
-          {submitting ? "Recording..." : "Record payment"}
-        </button>
+        {!needsExchangeRate && (
+          <button type="submit" disabled={submitting || outstanding <= 0 || !destinationAccountId}>
+            {submitting ? "Recording..." : "Record payment"}
+          </button>
+        )}
         <button type="button" className="secondary" onClick={onCancel}>
           Cancel
         </button>

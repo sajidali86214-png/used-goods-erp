@@ -1,6 +1,6 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal, assertNonNegative, sumDecimal } from "../../lib/money.js";
-import { lockExchangeRate } from "./currencyService.js";
+import { lockExchangeRate, convertOrderAmountToPkr } from "./currencyService.js";
 import { postCustomerReceipt, postRefund, postTransfer } from "./ledgerService.js";
 import { createRefund, markRefundPaid } from "../sales/refundService.js";
 import { getOrderPaymentSummary, updateOrderStatus, computeOrderCostSummary } from "../sales/salesOrderService.js";
@@ -40,16 +40,50 @@ export async function recordCustomerReceipt(params: {
     throw new Error("Allocations cannot exceed the received amount");
   }
 
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   for (const alloc of params.allocations) {
     const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: alloc.orderId }, include: { lines: true } });
     const { netTotal } = computeOrderCostSummary(order);
+
+    // The comparison must happen in ONE currency — the receipt's own. A
+    // receipt in the order's own currency (e.g. a GBP receipt against a GBP
+    // order — spec section 9's Fleek scenario) compares directly, no
+    // conversion needed. A PKR receipt against a non-PKR order (the
+    // one-step "record a sales order payment" popup always posts in PKR
+    // regardless of the order's currency) needs the order's own-currency
+    // netTotal converted to PKR first — comparing that PKR payment
+    // directly against a raw foreign-currency netTotal was exactly the "no
+    // FX conversion" bug. Any other combination (e.g. a USD receipt against
+    // a GBP order) has no conversion path and is rejected rather than
+    // silently comparing incompatible numbers.
+    let netTotalInReceiptCurrency: Decimal | null;
+    if (params.currencyId === order.currencyId) {
+      netTotalInReceiptCurrency = netTotal;
+    } else if (params.currencyId === pkr.id) {
+      netTotalInReceiptCurrency = await convertOrderAmountToPkr({
+        currencyId: order.currencyId,
+        exchangeRateSnapshotId: order.exchangeRateSnapshotId,
+        amount: netTotal,
+        pkrCurrencyId: pkr.id,
+      });
+    } else {
+      throw new Error(
+        `Cannot record a receipt in a currency that is neither Order ${order.orderNumber}'s own currency nor PKR — no conversion path exists for that combination`,
+      );
+    }
+    if (netTotalInReceiptCurrency === null) {
+      throw new Error(
+        `Order ${order.orderNumber} is in a non-PKR currency with no exchange rate locked — set one (PATCH /sales/orders/:id/exchange-rate) before recording a payment against it`,
+      );
+    }
+
     const existing = await prisma.paymentAllocation.findMany({ where: { orderId: alloc.orderId } });
     const alreadyReceived = sumDecimal(existing.map((a) => a.amount));
     const allocAmount = new Decimal(alloc.amount);
     const newTotal = alreadyReceived.plus(allocAmount);
-    if (newTotal.greaterThan(netTotal)) {
+    if (newTotal.greaterThan(netTotalInReceiptCurrency)) {
       throw new Error(
-        `Order ${order.orderNumber} has already received ${alreadyReceived.toString()} of ${netTotal.toString()} due — allocating ${allocAmount.toString()} more would overpay it by ${newTotal.minus(netTotal).toString()}. Nothing was recorded.`,
+        `Order ${order.orderNumber} has already received ${alreadyReceived.toString()} of ${netTotalInReceiptCurrency.toString()} due — allocating ${allocAmount.toString()} more would overpay it by ${newTotal.minus(netTotalInReceiptCurrency).toString()}. Nothing was recorded.`,
       );
     }
   }
@@ -128,6 +162,11 @@ export async function recordSalesOrderPayment(params: {
 
   const amount = new Decimal(params.amount);
   const before = await getOrderPaymentSummary(params.orderId);
+  if (before.outstanding === null) {
+    throw new Error(
+      `Order ${order.orderNumber} is in a non-PKR currency with no exchange rate locked — set one (PATCH /sales/orders/:id/exchange-rate) before recording a payment against it`,
+    );
+  }
   if (amount.greaterThan(before.outstanding)) {
     throw new Error(
       `Amount ${amount.toString()} exceeds the outstanding balance of ${before.outstanding.toString()} — nothing was recorded.`,
@@ -155,7 +194,10 @@ export async function recordSalesOrderPayment(params: {
   await postCustomerReceipt(receipt.id, params.actorUserId);
 
   const after = await getOrderPaymentSummary(params.orderId);
-  const newPaymentStatus = after.outstanding.lessThanOrEqualTo(0)
+  // The exchange rate can't have changed between `before` and `after` (no
+  // edit happened in between), so having passed the `before.outstanding ===
+  // null` guard above means this is never null here too.
+  const newPaymentStatus = after.outstanding!.lessThanOrEqualTo(0)
     ? "paid"
     : after.amountReceived.greaterThan(0)
       ? "partially_paid"

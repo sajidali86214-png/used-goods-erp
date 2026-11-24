@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { requirePermission } from "../../middleware/rbac.js";
+import { requirePermission, requireAnyPermission } from "../../middleware/rbac.js";
 import { lockExchangeRate, latestRate } from "./currencyService.js";
+import { refreshAllExchangeRates } from "./exchangeRateRefreshService.js";
 import { recordCustomerReceipt, convertCurrency, totalReceivedForOrder, recordTransfer } from "./paymentService.js";
 import {
   postExpense,
@@ -169,7 +170,9 @@ export async function financeRoutes(app: FastifyInstance) {
 
   app.get(
     "/finance/exchange-rates/latest",
-    { preHandler: requirePermission("finance.payment") },
+    // Also order.create: a seller entering a non-PKR sales order needs to
+    // fetch/pre-fill a rate too, not just finance.payment holders.
+    { preHandler: requireAnyPermission(["finance.payment", "order.create"]) },
     async (request) => {
       const { fromCurrencyId, toCurrencyId } = request.query as {
         fromCurrencyId: string;
@@ -178,6 +181,28 @@ export async function financeRoutes(app: FastifyInstance) {
       return latestRate(fromCurrencyId, toCurrencyId);
     },
   );
+
+  // Triggered by Vercel Cron (see vercel.json's "crons" entry) once a day —
+  // there's no logged-in user on a cron request, so this checks CRON_SECRET
+  // directly instead of going through requirePermission. Accepts the secret
+  // either as a Bearer header (in case Vercel's own cron auth sends one) or
+  // as a query param (guaranteed to work since the cron path itself is ours
+  // to configure in vercel.json) — whichever arrives, if either.
+  app.get("/finance/exchange-rates/refresh-live", async (request, reply) => {
+    const expected = process.env.CRON_SECRET;
+    if (!expected) {
+      return reply.code(500).send({ error: "CRON_SECRET is not configured" });
+    }
+    const header = request.headers.authorization;
+    const bearerToken = header?.startsWith("Bearer ") ? header.slice("Bearer ".length) : undefined;
+    const queryToken = (request.query as { secret?: string }).secret;
+    if (bearerToken !== expected && queryToken !== expected) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+
+    const results = await refreshAllExchangeRates();
+    return reply.send({ results });
+  });
 
   app.post(
     "/finance/receipts",

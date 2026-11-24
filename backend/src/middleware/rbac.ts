@@ -18,3 +18,15 @@ export function requirePermission(code: PermissionCode) {
     }
   };
 }
+
+/** Passes if the caller holds ANY of the given permissions — e.g. a read-only lookup several different roles each legitimately need. */
+export function requireAnyPermission(codes: PermissionCode[]) {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!request.authUser) {
+      return reply.code(401).send({ error: "unauthenticated" });
+    }
+    if (!codes.some((code) => request.authUser!.permissions.has(code))) {
+      return reply.code(403).send({ error: "forbidden", requiredAnyOf: codes });
+    }
+  };
+}

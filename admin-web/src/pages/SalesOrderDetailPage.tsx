@@ -69,6 +69,7 @@ interface OrderDetail {
   paymentStatus: string;
   qcStatus: string;
   channelId: string;
+  currencyId: string;
   shippingPerUnit: string | null;
   commissionType: "percentage" | "fixed" | null;
   commissionValue: string | null;
@@ -79,9 +80,12 @@ interface OrderDetail {
   costSummary: CostSummary;
 }
 interface PaymentSummary {
-  amountDue: string;
+  nativeAmountDue: string;
+  nativeCurrencyId: string;
+  needsExchangeRate: boolean;
+  amountDue: string | null;
   amountReceived: string;
-  outstanding: string;
+  outstanding: string | null;
 }
 interface Channel {
   id: string;
@@ -111,6 +115,7 @@ export function SalesOrderDetailPage() {
   const { has } = useAuth();
   const order = useFetch<OrderDetail>(`/sales/orders/${id}`);
   const grades = useFetch<Grade[]>("/settings/grades");
+  const currencies = useFetch<Currency[]>("/settings/currencies");
   const paymentSummary = useFetch<PaymentSummary>(`/sales/orders/${id}/payment-summary`, [id]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -263,31 +268,53 @@ export function SalesOrderDetailPage() {
 
       <div className="panel">
         <h3>Payment</h3>
-        {paymentSummary.data && (
+        {paymentSummary.data && !paymentSummary.data.needsExchangeRate && (
           <p>
-            Received <strong>{Number(paymentSummary.data.amountReceived).toLocaleString()}</strong> of{" "}
-            <strong>{Number(paymentSummary.data.amountDue).toLocaleString()}</strong> due
-            {Number(paymentSummary.data.outstanding) > 0 && ` — outstanding ${Number(paymentSummary.data.outstanding).toLocaleString()}`}
+            Received <strong>{Number(paymentSummary.data.amountReceived).toLocaleString()}</strong> PKR of{" "}
+            <strong>{Number(paymentSummary.data.amountDue).toLocaleString()}</strong> PKR due
+            {Number(paymentSummary.data.outstanding) > 0 && ` — outstanding ${Number(paymentSummary.data.outstanding).toLocaleString()} PKR`}
           </p>
         )}
         <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
           {Number(o.costSummary.discountTotal) > 0 && `Discount ${Number(o.costSummary.discountTotal).toLocaleString()} → `}
           Subtotal {Number(o.costSummary.subtotal).toLocaleString()} − shipping {Number(o.costSummary.shippingTotal).toLocaleString()}
           {o.commissionType && ` − commission ${Number(o.costSummary.commissionAmount).toLocaleString()}`} = net{" "}
-          {Number(o.costSummary.netTotal).toLocaleString()}
+          {Number(o.costSummary.netTotal).toLocaleString()} {currencies.data?.find((c) => c.id === o.currencyId)?.code ?? ""}
         </p>
-        {has("finance.payment") && paymentSummary.data && Number(paymentSummary.data.outstanding) > 0 && (
-          <RecordPaymentForm
-            orderId={o.id}
-            customerId={o.customer.id}
-            outstanding={Number(paymentSummary.data.outstanding)}
-            currentPaymentStatus={o.paymentStatus}
-            onRecorded={() => {
-              order.reload();
-              paymentSummary.reload();
-            }}
-          />
+        {paymentSummary.data?.needsExchangeRate && (
+          <>
+            <div className="error-banner">
+              This order is in a non-PKR currency ({currencies.data?.find((c) => c.id === paymentSummary.data!.nativeCurrencyId)?.code ?? "?"}) with
+              no exchange rate set — it won't count toward the ledger, dashboard, or customer balances, and a payment can't be recorded against it
+              until a rate is set.
+            </div>
+            {has("order.create") && o.paymentStatus === "unpaid" && (
+              <SetExchangeRateForm
+                orderId={o.id}
+                currencyCode={currencies.data?.find((c) => c.id === paymentSummary.data!.nativeCurrencyId)?.code ?? ""}
+                onSet={() => {
+                  order.reload();
+                  paymentSummary.reload();
+                }}
+              />
+            )}
+          </>
         )}
+        {has("finance.payment") &&
+          paymentSummary.data &&
+          !paymentSummary.data.needsExchangeRate &&
+          Number(paymentSummary.data.outstanding) > 0 && (
+            <RecordPaymentForm
+              orderId={o.id}
+              customerId={o.customer.id}
+              outstanding={Number(paymentSummary.data.outstanding)}
+              currentPaymentStatus={o.paymentStatus}
+              onRecorded={() => {
+                order.reload();
+                paymentSummary.reload();
+              }}
+            />
+          )}
       </div>
 
       {editing && (
@@ -615,6 +642,60 @@ function OrderStatusPanel({ order, onChanged }: { order: OrderDetail; onChanged:
         {saving ? "Saving..." : "Save status"}
       </button>
     </div>
+  );
+}
+
+function SetExchangeRateForm({
+  orderId,
+  currencyCode,
+  onSet,
+}: {
+  orderId: string;
+  currencyCode: string;
+  onSet: () => void;
+}) {
+  const [rate, setRate] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setSubmitting(true);
+    try {
+      await api.patch(`/sales/orders/${orderId}/exchange-rate`, {
+        exchangeRate: Number(rate),
+        source: reason || "Set from order detail page",
+        isManualOverride: true,
+        overrideReason: reason || "Set from order detail page",
+      });
+      onSet();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not set the exchange rate");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="panel" onSubmit={handleSubmit} style={{ marginTop: 12 }}>
+      <h4 style={{ marginTop: 0 }}>Set exchange rate</h4>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="form-row">
+        <div className="field" style={{ maxWidth: 200 }}>
+          <label>Exchange rate (1 {currencyCode} = ? PKR)</label>
+          <input type="number" min={0.000001} step="0.000001" value={rate} onChange={(e) => setRate(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label>Reason / source</label>
+          <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. bank rate on delivery date" required />
+        </div>
+      </div>
+      <button type="submit" disabled={submitting || !rate || !reason}>
+        {submitting ? "Saving..." : "Set rate"}
+      </button>
+    </form>
   );
 }
 

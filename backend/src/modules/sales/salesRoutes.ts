@@ -10,7 +10,9 @@ import {
   updateOrder,
   updateOrderLine,
   updateOrderStatus,
+  setOrderExchangeRate,
 } from "./salesOrderService.js";
+import { lockExchangeRate } from "../finance/currencyService.js";
 import { reserveStock, releaseReservation, suggestAllocation } from "./reservationService.js";
 import { pickFromReservation } from "./pickingService.js";
 import { computeLineProfitability } from "./profitabilityService.js";
@@ -28,6 +30,15 @@ const createOrderSchema = z.object({
   externalOrderId: z.string().optional(),
   customerId: z.string().uuid(),
   currencyId: z.string().uuid(),
+  // Required when currencyId isn't PKR — the rate to lock for this order's
+  // PKR conversion (ledger posting, payment matching, dashboard/report
+  // totals). isManualOverride/overrideReason let a seller override an
+  // auto-fetched "latest rate" with a negotiated one, audited same as every
+  // other manual override in this system.
+  exchangeRate: z.number().positive().optional(),
+  exchangeRateSource: z.string().optional(),
+  isManualOverride: z.boolean().optional(),
+  overrideReason: z.string().optional(),
   salespersonUserId: z.string().uuid().optional(),
   shippingPerUnit: z.number().nonnegative().optional(),
   commissionType: z.enum(["percentage", "fixed"]).optional(),
@@ -91,6 +102,13 @@ const updateOrderLineSchema = z.object({
   discountType: z.enum(["percentage", "fixed"]).nullable().optional(),
   discountValue: z.number().nonnegative().optional(),
   taxesFees: z.number().nonnegative().optional(),
+});
+
+const setExchangeRateSchema = z.object({
+  exchangeRate: z.number().positive(),
+  source: z.string().optional(),
+  isManualOverride: z.boolean().optional(),
+  overrideReason: z.string().optional(),
 });
 
 const recordPaymentSchema = z.object({
@@ -223,12 +241,64 @@ export async function salesRoutes(app: FastifyInstance) {
     { preHandler: requirePermission("order.create") },
     async (request, reply) => {
       const body = createOrderSchema.parse(request.body);
+
+      const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+      let exchangeRateSnapshotId: string | undefined;
+      if (body.currencyId !== pkr.id) {
+        if (!body.exchangeRate) {
+          return reply.code(400).send({ error: "exchangeRate is required for a non-PKR order" });
+        }
+        const snapshot = await lockExchangeRate({
+          fromCurrencyId: body.currencyId,
+          toCurrencyId: pkr.id,
+          rate: body.exchangeRate,
+          source: body.exchangeRateSource ?? "sales order creation",
+          isManualOverride: body.isManualOverride,
+          overrideReason: body.overrideReason,
+          overrideByUserId: request.authUser!.id,
+        });
+        exchangeRateSnapshotId = snapshot.id;
+      }
+
       const order = await createDraftOrder({
         ...body,
+        exchangeRateSnapshotId,
         actorUserId: request.authUser!.id,
         actorHasPriceOverride: request.authUser!.permissions.has("price.override"),
       });
       return reply.code(201).send(order);
+    },
+  );
+
+  // Sets (or replaces) the exchange rate on an existing editable order —
+  // covers a legacy order created before this feature existed, and letting
+  // staff correct a rate entered at order creation.
+  app.patch(
+    "/sales/orders/:id/exchange-rate",
+    { preHandler: requirePermission("order.create") },
+    async (request, reply) => {
+      const { id } = request.params as { id: string };
+      const body = setExchangeRateSchema.parse(request.body);
+      const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id } });
+      const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+      if (order.currencyId === pkr.id) {
+        return reply.code(400).send({ error: "This order is already in PKR — no exchange rate needed" });
+      }
+      try {
+        const snapshot = await lockExchangeRate({
+          fromCurrencyId: order.currencyId,
+          toCurrencyId: pkr.id,
+          rate: body.exchangeRate,
+          source: body.source ?? "sales order (set/updated)",
+          isManualOverride: body.isManualOverride,
+          overrideReason: body.overrideReason,
+          overrideByUserId: request.authUser!.id,
+        });
+        const updated = await setOrderExchangeRate(id, snapshot.id);
+        return reply.send(updated);
+      } catch (err) {
+        return reply.code(400).send({ error: err instanceof Error ? err.message : "could_not_set_rate" });
+      }
     },
   );
 

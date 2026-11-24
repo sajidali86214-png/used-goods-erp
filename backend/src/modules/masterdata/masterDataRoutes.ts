@@ -5,6 +5,7 @@ import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
 import { generateSkuCode } from "./skuGenerator.js";
 import { computeOrderCostSummary } from "../sales/salesOrderService.js";
+import { convertOrderAmountToPkr } from "../finance/currencyService.js";
 import { mediaUrl, deleteUploadedFile } from "../media/storage.js";
 
 /**
@@ -356,9 +357,25 @@ export async function masterDataRoutes(app: FastifyInstance) {
 
     // Net receivable per order, after discount/shipping/commission — not the raw
     // gross (quantity * unitPrice) — since that's what the customer actually owes.
+    // Converted to PKR via each order's own locked rate before summing —
+    // never added raw, which previously mixed a GBP order's number directly
+    // into a PKR total. An order with no rate locked yet is excluded.
+    const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
     let bookedValue = new Decimal(0);
+    let needsExchangeRateCount = 0;
     for (const order of orders) {
-      bookedValue = bookedValue.plus(computeOrderCostSummary(order).netTotal);
+      const netTotal = computeOrderCostSummary(order).netTotal;
+      const netTotalPkr = await convertOrderAmountToPkr({
+        currencyId: order.currencyId,
+        exchangeRateSnapshotId: order.exchangeRateSnapshotId,
+        amount: netTotal,
+        pkrCurrencyId: pkr.id,
+      });
+      if (netTotalPkr === null) {
+        needsExchangeRateCount += 1;
+        continue;
+      }
+      bookedValue = bookedValue.plus(netTotalPkr);
     }
     // Per order: the manual "payment received" popup amount takes precedence
     // over real PaymentAllocation totals, same rule as getOrderPaymentSummary.
@@ -387,7 +404,7 @@ export async function masterDataRoutes(app: FastifyInstance) {
         createdAt: o.createdAt,
         lineCount: o.lines.length,
       })),
-      balance: { bookedValue, received, outstanding: bookedValue.minus(received) },
+      balance: { bookedValue, received, outstanding: bookedValue.minus(received), needsExchangeRateCount },
     };
   });
 

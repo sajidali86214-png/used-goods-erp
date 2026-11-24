@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma.js";
 import { Decimal, sumDecimal } from "../../lib/money.js";
 import { getAccountBalance } from "../finance/ledgerService.js";
 import { computeOrderCostSummary } from "../sales/salesOrderService.js";
+import { convertOrderAmountToPkr } from "../finance/currencyService.js";
 
 /**
  * Operational dashboard: on-hand/reserved/available by state, across all
@@ -540,6 +541,7 @@ export async function getSupplierStatement(supplierId: string) {
  */
 export async function getCustomerBalances() {
   const customers = await prisma.customer.findMany({ where: { isActive: true } });
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
   const results = [];
 
   for (const customer of customers) {
@@ -549,9 +551,26 @@ export async function getCustomerBalances() {
     });
     if (orders.length === 0) continue;
 
+    // Each order's netTotal is in its own currency — converted to PKR via
+    // its own locked rate before summing, never added raw (a GBP order's
+    // number is not interchangeable with a PKR order's). An order with no
+    // rate locked yet is excluded from bookedValue and counted separately,
+    // rather than silently treated as if its total were already PKR.
     let bookedValue = new Decimal(0);
+    let needsExchangeRateCount = 0;
     for (const order of orders) {
-      bookedValue = bookedValue.plus(computeOrderCostSummary(order).netTotal);
+      const netTotal = computeOrderCostSummary(order).netTotal;
+      const netTotalPkr = await convertOrderAmountToPkr({
+        currencyId: order.currencyId,
+        exchangeRateSnapshotId: order.exchangeRateSnapshotId,
+        amount: netTotal,
+        pkrCurrencyId: pkr.id,
+      });
+      if (netTotalPkr === null) {
+        needsExchangeRateCount += 1;
+        continue;
+      }
+      bookedValue = bookedValue.plus(netTotalPkr);
     }
 
     const ordersNeedingAllocationLookup = orders.filter((o) => o.paymentReceivedAmount === null);
@@ -567,13 +586,14 @@ export async function getCustomerBalances() {
       }
     }
 
-    if (bookedValue.greaterThan(0) || received.greaterThan(0)) {
+    if (bookedValue.greaterThan(0) || received.greaterThan(0) || needsExchangeRateCount > 0) {
       results.push({
         customerId: customer.id,
         customerName: customer.name,
         bookedValue,
         received,
         outstanding: bookedValue.minus(received),
+        needsExchangeRateCount,
       });
     }
   }
@@ -591,6 +611,7 @@ export async function getCustomerBalances() {
 export async function getCustomerStatement(customerId: string) {
   const customer = await prisma.customer.findUniqueOrThrow({ where: { id: customerId } });
   const orders = await prisma.salesOrder.findMany({ where: { customerId }, include: { lines: true } });
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
 
   const allocations = await prisma.paymentAllocation.findMany({
     where: { orderId: { in: orders.filter((o) => o.paymentReceivedAmount === null).map((o) => o.id) } },
@@ -600,8 +621,24 @@ export async function getCustomerStatement(customerId: string) {
   const events: { date: Date; type: "order_booked" | "payment_received"; description: string; amount: Decimal }[] = [];
   for (const order of orders) {
     const netTotal = computeOrderCostSummary(order).netTotal;
-    if (netTotal.greaterThan(0)) {
-      events.push({ date: order.createdAt, type: "order_booked", description: `Order ${order.orderNumber} booked`, amount: netTotal });
+    const netTotalPkr = await convertOrderAmountToPkr({
+      currencyId: order.currencyId,
+      exchangeRateSnapshotId: order.exchangeRateSnapshotId,
+      amount: netTotal,
+      pkrCurrencyId: pkr.id,
+    });
+    if (netTotalPkr === null) {
+      // No rate locked yet — logged so it's visible in the chronology, but
+      // excluded from the running balance rather than adding its raw
+      // foreign-currency number as if it were already PKR.
+      events.push({
+        date: order.createdAt,
+        type: "order_booked",
+        description: `Order ${order.orderNumber} booked — needs an exchange rate set before it counts toward the balance`,
+        amount: new Decimal(0),
+      });
+    } else if (netTotalPkr.greaterThan(0)) {
+      events.push({ date: order.createdAt, type: "order_booked", description: `Order ${order.orderNumber} booked`, amount: netTotalPkr });
     }
     if (order.paymentReceivedAmount !== null && order.paymentReceivedAmount.greaterThan(0)) {
       events.push({

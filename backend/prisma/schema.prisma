@@ -934,6 +934,15 @@ model SalesOrder {
   externalOrderId       String?
   customerId            String
   currencyId            String
+  // ExchangeRateSnapshot.id, plain reference (see file header) — the
+  // indicative rate locked for this order at creation time, used to convert
+  // its (possibly non-PKR) line totals into PKR for the ledger, payment
+  // matching, and any report/dashboard that sums across orders. Null for a
+  // PKR order (no conversion needed) and for a pre-fix legacy non-PKR order
+  // that predates this field — those are excluded from PKR aggregates
+  // rather than silently treated as already-PKR, and need a rate set via
+  // PATCH /sales/orders/:id/exchange-rate before they can post or count.
+  exchangeRateSnapshotId String?
   status                String   @default("draft") // draft | confirmed | partially_cancelled | cancelled | closed
   paymentStatus         String   @default("unpaid") // unpaid | partially_paid | paid
   fulfilmentStatus      String   @default("unfulfilled") // unfulfilled | picking | packed | partially_dispatched | dispatched | partially_delivered | delivered | returned | cancelled

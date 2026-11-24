@@ -38,3 +38,30 @@ export async function latestRate(fromCurrencyId: string, toCurrencyId: string) {
     orderBy: { capturedAt: "desc" },
   });
 }
+
+/**
+ * Converts a sales order amount (in the order's own currency) to PKR using
+ * its own locked exchangeRateSnapshotId — never the currency's current
+ * "latest" rate, since that would move a historical order's PKR value every
+ * time a new rate is captured (same append-only-snapshot principle as
+ * lockExchangeRate's docstring).
+ *
+ * Returns null, rather than guessing, when conversion isn't possible: a
+ * non-PKR order with no rate locked yet (a pre-this-fix legacy order, or a
+ * still-unconfirmed draft nobody has set a rate on). Callers must treat
+ * null as "exclude this order from any PKR total, don't add its raw
+ * foreign-currency number as if it were already PKR" — that silent mixing
+ * is exactly the bug this function exists to prevent.
+ */
+export async function convertOrderAmountToPkr(params: {
+  currencyId: string;
+  exchangeRateSnapshotId: string | null;
+  amount: Decimal;
+  pkrCurrencyId: string;
+}): Promise<Decimal | null> {
+  if (params.currencyId === params.pkrCurrencyId) return params.amount;
+  if (!params.exchangeRateSnapshotId) return null;
+  const snapshot = await prisma.exchangeRateSnapshot.findUnique({ where: { id: params.exchangeRateSnapshotId } });
+  if (!snapshot) return null;
+  return params.amount.times(snapshot.rate);
+}

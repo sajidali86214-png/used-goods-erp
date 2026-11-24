@@ -343,11 +343,38 @@ export async function postRefund(refundId: string, actorUserId: string) {
 }
 
 /**
+ * Resolves a sales order's own-currency amount into PKR for ledger posting.
+ * A PKR order needs no rate (1:1). A non-PKR order MUST have a rate locked
+ * on it (SalesOrder.exchangeRateSnapshotId, set at order creation or via
+ * PATCH /sales/orders/:id/exchange-rate) — this throws rather than falling
+ * back to treating the raw foreign-currency number as PKR, which is exactly
+ * the bug this replaces (confirmed in production: a delivered, paid GBP
+ * order posted zero ledger entries because the old assertPkr check threw
+ * and the caller silently swallowed it).
+ */
+async function resolveOrderPkrRate(
+  tx: Prisma.TransactionClient,
+  order: { id: string; orderNumber: string; currencyId: string; exchangeRateSnapshotId: string | null },
+  pkrCurrencyId: string,
+): Promise<Decimal> {
+  if (order.currencyId === pkrCurrencyId) return new Decimal(1);
+  if (!order.exchangeRateSnapshotId) {
+    throw new Error(
+      `Order ${order.orderNumber} is in a non-PKR currency with no exchange rate locked — set one (PATCH /sales/orders/:id/exchange-rate) before dispatching`,
+    );
+  }
+  const snapshot = await tx.exchangeRateSnapshot.findUniqueOrThrow({ where: { id: order.exchangeRateSnapshotId } });
+  return snapshot.rate;
+}
+
+/**
  * Posts revenue and COGS for one shipment line, at dispatch — the DEFAULT
  * recognition point (see module docstring). Revenue uses the order line's
- * bundle-allocated unit revenue if present, else its plain unitPrice; COGS
- * uses the actual cost layer the dispatched pieces came from (never the
- * product's latest purchase price — spec section 12).
+ * bundle-allocated unit revenue if present, else its plain unitPrice,
+ * converted to PKR at the order's own locked exchange rate; COGS uses the
+ * actual cost layer the dispatched pieces came from (never the product's
+ * latest purchase price — spec section 12), already PKR since purchasing
+ * costs everything in PKR regardless of a sale's currency.
  */
 export async function postSaleDispatch(shipmentLineId: string, actorUserId: string) {
   return runSerializable(async (tx) => {
@@ -363,12 +390,12 @@ export async function postSaleDispatch(shipmentLineId: string, actorUserId: stri
     }
 
     const pkr = await pkrCurrency(tx);
-    assertPkr(shipmentLine.orderLine.order.currencyId, pkr.id, "postSaleDispatch (order currency)");
+    const rate = await resolveOrderPkrRate(tx, shipmentLine.orderLine.order, pkr.id);
 
     const unitRevenue = shipmentLine.orderLine.bundleAllocation
       ? shipmentLine.orderLine.bundleAllocation.derivedUnitRevenue
       : shipmentLine.orderLine.unitPrice ?? new Decimal(0);
-    const revenue = unitRevenue.times(shipmentLine.quantity);
+    const revenue = unitRevenue.times(shipmentLine.quantity).times(rate);
     const cogs = shipmentLine.pickAllocation.costLayer.unitCost.times(shipmentLine.quantity);
 
     const accountsReceivable = await controlAccount(tx, "ACCOUNTS_RECEIVABLE");

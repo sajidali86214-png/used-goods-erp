@@ -1,6 +1,7 @@
 import { prisma } from "../../lib/prisma.js";
 import { Decimal } from "../../lib/money.js";
 import { generateSequentialNumber } from "../../lib/sequentialNumber.js";
+import { convertOrderAmountToPkr } from "../finance/currencyService.js";
 
 export async function generateOrderNumber(): Promise<string> {
   return generateSequentialNumber({
@@ -27,6 +28,9 @@ interface CreateOrderInput {
   externalOrderId?: string;
   customerId: string;
   currencyId: string;
+  // Required for a non-PKR order (locked by the route via lockExchangeRate
+  // before calling here) — null for a PKR order, which needs no conversion.
+  exchangeRateSnapshotId?: string | null;
   salespersonUserId?: string;
   shippingPerUnit?: Decimal | number;
   commissionType?: "percentage" | "fixed";
@@ -126,6 +130,7 @@ export async function createDraftOrder(input: CreateOrderInput) {
       externalOrderId: input.externalOrderId,
       customerId: input.customerId,
       currencyId: input.currencyId,
+      exchangeRateSnapshotId: input.exchangeRateSnapshotId ?? undefined,
       salespersonUserId: input.salespersonUserId,
       shippingPerUnit: input.shippingPerUnit !== undefined ? new Decimal(input.shippingPerUnit) : undefined,
       commissionType: input.commissionType,
@@ -204,11 +209,17 @@ export async function updateOrderStatus(
 }
 
 /**
- * How much of the order's net amount due (after discount/shipping/commission)
- * has actually been received, for the payment popup and summary panel.
- * "Received" prefers the manual paymentReceivedAmount entered via the quick
- * popup; falls back to real PaymentAllocation totals if that's unset, so
- * adopting the full finance flow later doesn't silently double-count.
+ * amountDue/outstanding are PKR — payments are always recorded in PKR
+ * (recordSalesOrderPayment locks a trivial PKR->PKR rate even for a PKR
+ * order), so comparing them against a foreign-currency netTotal directly
+ * was exactly the bug this fixes (a $100 order and a Rs 100 order used to
+ * look identical here). nativeAmountDue/nativeCurrencyId are the order's
+ * own-currency total, kept for display ("what the customer agreed to in
+ * their currency"). needsExchangeRate is true for a non-PKR order with no
+ * rate locked yet — amountDue/outstanding are null in that case rather than
+ * silently treating the native total as if it were already PKR; the caller
+ * must get a rate set (PATCH /sales/orders/:id/exchange-rate) before
+ * recording a payment or counting this order in any PKR total.
  */
 export async function getOrderPaymentSummary(orderId: string) {
   const order = await prisma.salesOrder.findUniqueOrThrow({ where: { id: orderId }, include: { lines: true } });
@@ -218,7 +229,34 @@ export async function getOrderPaymentSummary(orderId: string) {
     const allocations = await prisma.paymentAllocation.findMany({ where: { orderId } });
     amountReceived = allocations.reduce((sum, a) => sum.plus(a.amount), new Decimal(0));
   }
-  return { amountDue: netTotal, amountReceived, outstanding: netTotal.minus(amountReceived) };
+
+  const pkr = await prisma.currency.findUniqueOrThrow({ where: { code: "PKR" } });
+  const pkrNetTotal = await convertOrderAmountToPkr({
+    currencyId: order.currencyId,
+    exchangeRateSnapshotId: order.exchangeRateSnapshotId,
+    amount: netTotal,
+    pkrCurrencyId: pkr.id,
+  });
+
+  return {
+    nativeAmountDue: netTotal,
+    nativeCurrencyId: order.currencyId,
+    needsExchangeRate: pkrNetTotal === null,
+    amountDue: pkrNetTotal,
+    amountReceived,
+    outstanding: pkrNetTotal === null ? null : pkrNetTotal.minus(amountReceived),
+  };
+}
+
+/**
+ * Sets (or replaces) the exchange rate an order converts through to PKR.
+ * Only while the order is still editable (assertOrderIsEditable — same rule
+ * as every other order edit): once a payment has actually been received
+ * against it, the figures it was charged against must stay fixed.
+ */
+export async function setOrderExchangeRate(orderId: string, exchangeRateSnapshotId: string) {
+  await assertOrderIsEditable(orderId);
+  return prisma.salesOrder.update({ where: { id: orderId }, data: { exchangeRateSnapshotId } });
 }
 
 /**

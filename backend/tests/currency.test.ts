@@ -42,23 +42,26 @@ describe("acceptance test #12: GBP sale, partial GBP receipt, later GBP->PKR con
       data: { skuCode: `SKU-${randomUUID()}`, name: "Fleek bundle", categoryId: category.id },
     });
 
-    const order = await createDraftOrder({
-      channelId: fleek.id,
-      customerId: customer.id,
-      currencyId: gbp.id,
-      actorUserId: user.id,
-      actorHasPriceOverride: false,
-      lines: [{ productId: product.id, quantity: 10, unitPrice: 20 }],
-    });
-    const orderTotalGbp = 200; // 10 * 20
-
-    // Indicative rate captured while preparing the order.
+    // Indicative rate captured while preparing the order — also locked onto
+    // the order itself (exchangeRateSnapshotId) so its GBP netTotal has a
+    // real PKR equivalent for payment matching/ledger/dashboard purposes.
     const indicativeRate = await lockExchangeRate({
       fromCurrencyId: gbp.id,
       toCurrencyId: pkr.id,
       rate: 350,
       source: "test-indicative",
     });
+
+    const order = await createDraftOrder({
+      channelId: fleek.id,
+      customerId: customer.id,
+      currencyId: gbp.id,
+      exchangeRateSnapshotId: indicativeRate.id,
+      actorUserId: user.id,
+      actorHasPriceOverride: false,
+      lines: [{ productId: product.id, quantity: 10, unitPrice: 20 }],
+    });
+    const orderTotalGbp = 200; // 10 * 20
 
     // Partial GBP receipt: only 100 of the 200 GBP order value received so far.
     const receipt = await recordCustomerReceipt({
