@@ -1006,7 +1006,7 @@ function PaymentActionPopup({
   // Prefill the amount to the full outstanding balance once it's known —
   // editable, so a partial payment is just as easy to enter.
   useEffect(() => {
-    if (summary.data && !needsExchangeRate) setAmount((prev) => prev || String(outstanding));
+    if (summary.data && !needsExchangeRate) setAmount((prev) => prev || outstanding.toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data]);
 

@@ -711,7 +711,10 @@ function RecordPaymentForm({
   onRecorded: () => void;
 }) {
   const accounts = useFetch<Account[]>("/settings/accounts");
-  const [amount, setAmount] = useState(String(outstanding));
+  // PKR amounts are Decimal(18,4) internally, so a converted FX total can
+  // carry more precision than the 2-decimal-place input (step="0.01") and
+  // real currency rounding expect — round the suggestion, not the raw value.
+  const [amount, setAmount] = useState(outstanding.toFixed(2));
   const [destinationAccountId, setDestinationAccountId] = useState("");
   const [receivedAt, setReceivedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [bankReference, setBankReference] = useState("");
